@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
-import { useAuth } from '../contexts/AuthContext';
 
 interface Question {
   id: string;
@@ -18,31 +17,49 @@ interface CurrentQuestion {
   time_limit: number;
 }
 
+interface PlayerSession {
+  roomCode: string;
+  playerId: string;
+  playerName: string;
+  timestamp: number;
+}
+
 const QuizPlayer = () => {
   const { roomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(30);
   const [players, setPlayers] = useState<any[]>([]);
+  const [playerSession, setPlayerSession] = useState<PlayerSession | null>(null);
 
   const questionChannelRef = useRef<any>(null);
   const timerRef = useRef<any>(null);
 
   useEffect(() => {
-    if (!user || !roomCode || roomCode === 'undefined') {
+    if (!roomCode || roomCode === 'undefined') {
       navigate('/');
       return;
     }
 
-    initializePlayer();
-  }, [user, roomCode]);
+    // Check for existing session
+    const savedSession = localStorage.getItem(`quiz_session_${roomCode}`);
+    if (!savedSession) {
+      // No session, redirect to join
+      navigate(`/join/${roomCode}`);
+      return;
+    }
 
-  const initializePlayer = async () => {
-    if (!user || !roomCode) return;
+    const session: PlayerSession = JSON.parse(savedSession);
+    setPlayerSession(session);
+
+    initializePlayer(session);
+  }, [roomCode, navigate]);
+
+  const initializePlayer = async (session: PlayerSession) => {
+    if (!roomCode) return;
 
     // Get room
     const { data: roomData, error: roomError } = await supabase
@@ -52,20 +69,24 @@ const QuizPlayer = () => {
       .single();
 
     if (roomError || !roomData) {
-      navigate('/');
+      // Room not found, clear session
+      localStorage.removeItem(`quiz_session_${roomCode}`);
+      navigate(`/join/${roomCode}`);
       return;
     }
 
-    // Get or create player
-    const { error: playerError } = await supabase
+    // Verify player still exists
+    const { data: playerData, error: playerError } = await supabase
       .from('players')
-      .select('id')
+      .select('id, name')
+      .eq('id', session.playerId)
       .eq('room_id', roomData.id)
-      .eq('user_id', user!.id)
       .single();
 
-    if (playerError && playerError.code !== 'PGRST116') {
-      console.error('Error finding player:', playerError);
+    if (playerError || !playerData) {
+      // Player not found, clear session
+      localStorage.removeItem(`quiz_session_${roomCode}`);
+      navigate(`/join/${roomCode}`);
       return;
     }
 
@@ -134,13 +155,13 @@ const QuizPlayer = () => {
   };
 
   const submitAnswer = async () => {
-    if (!currentQuestion || selectedAnswer === null || !user) return;
+    if (!currentQuestion || selectedAnswer === null || !playerSession) return;
 
     // Submit answer
     await supabase
       .from('answers')
       .insert([{
-        player_id: user.id, // This should be the player id, not user id
+        player_id: playerSession.playerId,
         question_id: currentQuestion.id,
         answer: selectedAnswer,
         is_correct: selectedAnswer === currentQuestion.correct_answer

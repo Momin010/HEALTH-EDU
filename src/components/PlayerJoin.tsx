@@ -1,77 +1,110 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
 
 const PlayerJoin = () => {
   const { roomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
-  const { user, profile } = useAuth();
   const [playerName, setPlayerName] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (profile) {
-      setPlayerName(profile.full_name || profile.email || '');
+    // Check if user already has a session for this room
+    const savedSession = localStorage.getItem(`quiz_session_${roomCode}`);
+    if (savedSession) {
+      const session = JSON.parse(savedSession);
+      if (session.playerName && session.playerId) {
+        // User already joined, go directly to play
+        navigate(`/play/${roomCode}`);
+        return;
+      }
     }
-  }, [profile]);
+  }, [roomCode, navigate]);
 
   const joinRoom = async () => {
-    if (!user || !playerName.trim() || !roomCode) return;
+    if (!playerName.trim() || !roomCode) return;
 
+    setIsLoading(true);
     setError('');
 
-    // Check if room exists
-    const { data: room, error: roomError } = await supabase
-      .from('rooms')
-      .select('id, status')
-      .eq('code', roomCode.toUpperCase())
-      .single();
+    try {
+      // Check if room exists
+      const { data: room, error: roomError } = await supabase
+        .from('rooms')
+        .select('id, status')
+        .eq('code', roomCode.toUpperCase())
+        .single();
 
-    if (roomError || !room) {
-      setError('Room not found');
-      return;
-    }
+      if (roomError || !room) {
+        setError('Room not found');
+        setIsLoading(false);
+        return;
+      }
 
-    if (room.status !== 'waiting' && room.status !== 'active') {
-      setError('Room is not available');
-      return;
-    }
+      if (room.status !== 'waiting' && room.status !== 'active') {
+        setError('Room is not available');
+        setIsLoading(false);
+        return;
+      }
 
-    // Check if user is already in this room
-    const { data: existingPlayer } = await supabase
-      .from('players')
-      .select('id')
-      .eq('room_id', room.id)
-      .eq('user_id', user.id)
-      .single();
+      // Check if player with this name already exists in room
+      const { data: existingPlayer } = await supabase
+        .from('players')
+        .select('id')
+        .eq('room_id', room.id)
+        .eq('name', playerName.trim())
+        .single();
 
-    if (existingPlayer) {
-      // User already joined, go directly to play
+      let playerId: string;
+
+      if (existingPlayer) {
+        // Reconnect existing player
+        playerId = existingPlayer.id;
+        // Update connection status
+        await supabase
+          .from('players')
+          .update({ is_connected: true })
+          .eq('id', playerId);
+      } else {
+        // Create new player
+        const { data: newPlayer, error: playerError } = await supabase
+          .from('players')
+          .insert([{
+            room_id: room.id,
+            name: playerName.trim(),
+            score: 0,
+            is_connected: true
+          }])
+          .select()
+          .single();
+
+        if (playerError || !newPlayer) {
+          setError('Failed to join room');
+          setIsLoading(false);
+          return;
+        }
+
+        playerId = newPlayer.id;
+      }
+
+      // Save session to localStorage for persistence
+      const session = {
+        roomCode: roomCode.toUpperCase(),
+        playerId,
+        playerName: playerName.trim(),
+        timestamp: Date.now()
+      };
+      localStorage.setItem(`quiz_session_${roomCode}`, JSON.stringify(session));
+
+      // Navigate to quiz player
       navigate(`/play/${roomCode}`);
-      return;
+    } catch (err) {
+      console.error('Error joining room:', err);
+      setError('An error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
-
-    // Add player to room
-    const { data: player, error: playerError } = await supabase
-      .from('players')
-      .insert([{
-        room_id: room.id,
-        user_id: user.id,
-        name: playerName.trim(),
-        score: 0,
-        is_connected: true
-      }])
-      .select()
-      .single();
-
-    if (playerError) {
-      setError('Failed to join room');
-      return;
-    }
-
-    // Navigate to quiz player
-    navigate(`/play/${roomCode}`);
   };
 
   return (

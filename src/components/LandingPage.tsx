@@ -61,6 +61,19 @@ const LandingPage = () => {
               </button>
             </div>
           </div>
+
+          {/* Student Entry Link - For teachers to share with students */}
+          {profile?.role === 'teacher' && (
+            <div className="text-center border-t pt-6">
+              <p className="text-gray-600 mb-3">Share this link with your students:</p>
+              <button
+                onClick={() => navigator.clipboard.writeText(window.location.origin + '/student')}
+                className="text-blue-600 hover:text-blue-800 underline text-sm"
+              >
+                {window.location.origin}/student
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="mt-8 text-center">

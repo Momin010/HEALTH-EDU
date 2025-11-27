@@ -4,6 +4,9 @@ A real-time quiz application built with React and Supabase, similar to Kahoot fo
 
 ## Features
 
+- **Teacher Authentication**: Secure login system for quiz hosts
+- **Student Guest Access**: No accounts needed - just enter room code and username
+- **Session Persistence**: Students stay in game even after page refresh
 - **Host Dashboard**: Create rooms, add questions (multiple choice or true/false), start quizzes
 - **Player Interface**: Join rooms with codes, answer questions in real-time
 - **Real-time Updates**: Live leaderboard and question broadcasting
@@ -37,24 +40,38 @@ A real-time quiz application built with React and Supabase, similar to Kahoot fo
 
 ## Usage
 
-### For Teachers (Hosts)
-1. Go to the main page
-2. Click "Create Room" to generate a room code
-3. Add questions (multiple choice with 4 options or true/false)
-4. Share the room code with students
-5. Click "Start Quiz" when ready
+### For Teachers (Require Authentication)
+1. **Sign Up/Login**: Go to the main page and authenticate
+2. **Create Room**: Click "Create Room" to generate a room code
+3. **Add Questions**: Create multiple choice (4 options) or true/false questions
+4. **Share Access**: Give students the direct link: `yoursite.com/student`
+5. **Start Quiz**: Click "Start Quiz" when ready
 
-### For Students (Players)
-1. Go to `/join/{room_code}` (replace with actual code)
-2. Enter your name
-3. Answer questions as they appear
-4. View live leaderboard
+### For Students (No Authentication Required)
+1. **Enter Room**: Go to `yoursite.com/student` or `/join/{room_code}`
+2. **Choose Name**: Enter your display name (no account needed)
+3. **Session Persistence**: Stay in the game even after page refresh
+4. **Play Quiz**: Answer questions as they appear in real-time
+5. **View Results**: See live leaderboard and final scores
+
+## Authentication Model
+
+### Teacher Authentication
+- **Required**: Teachers must create accounts to host quizzes
+- **Secure Access**: Login required for room creation and management
+- **Role-based**: Only users with 'teacher' role can create rooms
+
+### Student Guest Access
+- **No Accounts Needed**: Students join with just room code + username
+- **Session Persistence**: localStorage maintains session across page refreshes
+- **Temporary Players**: Player data stored in database but no user accounts
+- **Easy Access**: Direct link `yoursite.com/student` for students
 
 ## Database Schema
 
 - **rooms**: Quiz rooms with codes and status
 - **questions**: Quiz questions with options and correct answers
-- **players**: Participants with names and scores
+- **players**: Participants with names and scores (no user_id for students)
 - **answers**: Submitted answers with correctness
 - **current_question**: Tracks the active question for each room
 

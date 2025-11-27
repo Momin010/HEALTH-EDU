@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Auth from './components/Auth';
 import LandingPage from './components/LandingPage';
+import StudentEntry from './components/StudentEntry';
 import HostDashboard from './components/HostDashboard';
 import PlayerJoin from './components/PlayerJoin';
 import PlayerLobby from './components/PlayerLobby';
@@ -18,14 +19,14 @@ function AppContent() {
     );
   }
 
-  if (!user) {
-    return <Auth onAuthSuccess={() => {}} />;
-  }
-
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/host" element={<HostDashboard />} />
+      {/* Teacher routes - require authentication */}
+      <Route path="/" element={user ? <LandingPage /> : <Auth onAuthSuccess={() => {}} />} />
+      <Route path="/host" element={user ? <HostDashboard /> : <Auth onAuthSuccess={() => {}} />} />
+
+      {/* Student routes - no authentication required */}
+      <Route path="/student" element={<StudentEntry />} />
       <Route path="/join/:roomCode" element={<PlayerJoin />} />
       <Route path="/lobby/:roomId" element={<PlayerLobby />} />
       <Route path="/play/:roomCode" element={<QuizPlayer />} />
