@@ -246,45 +246,60 @@ const HostDashboard = () => {
   const startQuiz = async () => {
     if (!room) return;
 
+    console.log('🚀 Starting quiz for room:', room.id);
     setIsLoading(true);
+    
     const { error } = await supabase
       .from('rooms')
       .update({ status: 'active' })
       .eq('id', room.id);
 
     if (error) {
-      console.error('Error starting quiz:', error);
+      console.error('❌ Error starting quiz:', error);
       setIsLoading(false);
       return;
     }
 
+    console.log('✅ Room status updated to active');
+    
     // reflect locally and broadcast first question
     setRoom((r) => (r ? { ...r, status: 'active' } : r));
     
     // Ensure questions are loaded before broadcasting
     if (dbQuestions.length === 0) {
+      console.log('📥 Loading questions from database...');
       const { data: loadedQuestions } = await supabase
         .from('questions')
         .select('*')
         .eq('room_id', room.id)
         .order('order_index');
       setDbQuestions(loadedQuestions || []);
+      console.log('📚 Loaded questions:', loadedQuestions?.length || 0);
     }
     
     // Small delay to ensure database is updated
+    console.log('⏰ Waiting 500ms before broadcasting...');
     setTimeout(async () => {
+      console.log('📡 Starting broadcast...');
       await broadcastNextQuestion(room.id);
     }, 500);
     setIsLoading(false);
   };
 
   const broadcastNextQuestion = async (roomId?: string) => {
+    console.log('📡 broadcastNextQuestion called with roomId:', roomId);
     const rId = roomId ?? room?.id;
-    if (!rId) return;
+    console.log('📍 Final roomId:', rId);
+    
+    if (!rId) {
+      console.log('❌ No roomId provided, exiting');
+      return;
+    }
 
     // Ensure we have questions - if not, load from database
     let questionsToUse = dbQuestions;
     if (questionsToUse.length === 0) {
+      console.log('📥 No questions in memory, loading from database...');
       const { data: dbQ } = await supabase
         .from('questions')
         .select('*')
@@ -292,19 +307,27 @@ const HostDashboard = () => {
         .order('order_index');
       questionsToUse = dbQ || [];
       setDbQuestions(questionsToUse);
+      console.log('📚 Loaded questions from DB:', questionsToUse.length);
     }
 
-    if (questionsToUse.length === 0) return;
+    if (questionsToUse.length === 0) {
+      console.log('❌ No questions available, exiting');
+      return;
+    }
 
     // reload room to get latest index if necessary
+    console.log('🔍 Loading room data...');
     const { data: roomData } = await supabase
       .from('rooms')
       .select('current_question_index')
       .eq('id', rId)
       .single();
 
+    console.log('🏠 Room data:', roomData);
     const currentIndex = roomData?.current_question_index ?? 0;
+    console.log('📊 Current index:', currentIndex);
     const nextQuestion = questionsToUse.find((q) => q.order_index === currentIndex);
+    console.log('🔍 Looking for question at index', currentIndex, 'found:', nextQuestion);
 
     console.log('Broadcasting question:', { currentIndex, nextQuestion });
     
