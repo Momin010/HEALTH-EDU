@@ -124,7 +124,7 @@ const QuizPlayer = () => {
       .single();
 
     if (data?.questions) {
-      setCurrentQuestion(data.questions as Question);
+      setCurrentQuestion(data.questions as unknown as Question);
       setSelectedAnswer(null);
       setHasAnswered(false);
       setTimeLeft(30);
