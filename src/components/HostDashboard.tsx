@@ -28,6 +28,7 @@ const HostDashboard = () => {
   const [room, setRoom] = useState<Room | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [dbQuestions, setDbQuestions] = useState<any[]>([]);
 
   // keep refs to subscriptions so we can unsubscribe correctly
   const roomChannelRef = useRef<any | null>(null);
@@ -205,7 +206,8 @@ const HostDashboard = () => {
     subscribeToRoomUpdates(data.id);
 
     // Add the hardcoded questions to the database
-    await addQuestionsToDatabase(data.id);
+    const insertedQuestions = await addQuestionsToDatabase(data.id);
+    setDbQuestions(insertedQuestions);
 
     setIsLoading(false);
   };
@@ -221,13 +223,24 @@ const HostDashboard = () => {
       order_index: index
     }));
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('questions')
-      .insert(questionsToInsert);
+      .insert(questionsToInsert)
+      .select();
 
     if (error) {
       console.error('Error adding questions:', error);
+      return [];
     }
+
+    // Store the database question IDs for later use
+    const dbQuestions = data.map((dbQ, index) => ({
+      ...dbQ,
+      // Map back to original question for reference
+      originalIndex: index
+    }));
+    
+    return dbQuestions;
   };
 
   const startQuiz = async () => {
@@ -253,7 +266,21 @@ const HostDashboard = () => {
 
   const broadcastNextQuestion = async (roomId?: string) => {
     const rId = roomId ?? room?.id;
-    if (!rId || quizQuestions.length === 0) return;
+    if (!rId) return;
+
+    // Ensure we have questions - if not, load from database
+    let questionsToUse = dbQuestions;
+    if (questionsToUse.length === 0) {
+      const { data: dbQ } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('room_id', rId)
+        .order('order_index');
+      questionsToUse = dbQ || [];
+      setDbQuestions(questionsToUse);
+    }
+
+    if (questionsToUse.length === 0) return;
 
     // reload room to get latest index if necessary
     const { data: roomData } = await supabase
@@ -263,7 +290,7 @@ const HostDashboard = () => {
       .single();
 
     const currentIndex = roomData?.current_question_index ?? 0;
-    const nextQuestion = quizQuestions.find((q) => q.order_index === currentIndex);
+    const nextQuestion = questionsToUse.find((q) => q.order_index === currentIndex);
 
     if (nextQuestion) {
       const { error } = await supabase

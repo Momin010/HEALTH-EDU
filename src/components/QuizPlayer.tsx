@@ -12,6 +12,13 @@ interface Question {
   order_index: number;
 }
 
+interface Room {
+  id: string;
+  code: string;
+  status: "waiting" | "active" | "finished";
+  current_question_index: number;
+}
+
 interface CurrentQuestion {
   question_id: string;
   question_index: number;
@@ -94,6 +101,7 @@ const QuizPlayer = () => {
     // Load questions and subscribe
     loadQuestions(roomData.id);
     subscribeToCurrentQuestion(roomData.id);
+    subscribeToRoomUpdates(roomData.id);
     loadPlayers(roomData.id);
   };
 
@@ -105,7 +113,10 @@ const QuizPlayer = () => {
       .order('order_index');
 
     if (!error && data) {
+      console.log('Loaded questions:', data);
       setAllQuestions(data);
+    } else if (error) {
+      console.error('Error loading questions:', error);
     }
   };
 
@@ -122,15 +133,22 @@ const QuizPlayer = () => {
           filter: `room_id=eq.${roomId}`,
         },
         (payload) => {
+          console.log('Current question update:', payload);
           const cq = payload.new as CurrentQuestion;
           if (cq && cq.question_id) {
             const question = allQuestions.find((q) => q.id === cq.question_id);
             if (question) {
+              console.log('Found question:', question);
               setCurrentQuestion(question);
               setSelectedAnswer(null);
-              setTimeLeft(cq.time_limit);
+              setTimeLeft(cq.time_limit || QUIZ_CONFIG.TIME_LIMIT);
               startTimer(QUIZ_CONFIG.TIME_LIMIT);
+            } else {
+              console.log('Question not found for ID:', cq.question_id);
+              console.log('Available questions:', allQuestions);
             }
+          } else {
+            console.log('No question_id in payload:', cq);
           }
         }
       )
@@ -194,6 +212,31 @@ const QuizPlayer = () => {
     setSelectedAnswer(null);
   };
 
+  const subscribeToRoomUpdates = (roomId: string) => {
+    const channel = supabase
+      .channel(`player_room_${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          schema: "public",
+          table: "rooms",
+          filter: `id=eq.${roomId}`,
+          event: "*",
+        },
+        async (payload) => {
+          console.log('Room update:', payload);
+          const updated = payload.new as Room;
+          if (updated && updated.status === 'active') {
+            // Quiz started, reload questions to ensure we have the latest
+            await loadQuestions(roomId);
+          }
+        }
+      )
+      .subscribe();
+
+    questionChannelRef.current = channel;
+  };
+
   const loadPlayers = async (roomId: string) => {
     const { data } = await supabase
       .from('players')
@@ -228,7 +271,13 @@ const QuizPlayer = () => {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      questionChannelRef.current?.unsubscribe?.();
+      if (questionChannelRef.current) {
+        try {
+          questionChannelRef.current.unsubscribe();
+        } catch (e) {
+          console.warn('Error unsubscribing channel:', e);
+        }
+      }
     };
   }, []);
 
@@ -236,8 +285,13 @@ const QuizPlayer = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="bg-white p-8 rounded-lg shadow-md text-center">
-          <h1 className="text-2xl font-bold mb-4">Waiting for next question...</h1>
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+          <h1 className="text-2xl font-bold mb-4">Odotetaan seuraavaa kysymystä...</h1>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Kysymyksiä ladattu: {allQuestions.length}</p>
+          <p className="text-gray-600">Huone: {roomCode}</p>
+          <p className="text-gray-500 text-sm mt-2">
+            Tarkista konsoli (F12) nähdäksesi debug-tietoja
+          </p>
         </div>
       </div>
     );
