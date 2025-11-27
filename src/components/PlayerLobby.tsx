@@ -49,12 +49,14 @@ const PlayerLobby = () => {
           event: "*",
         },
         async (payload) => {
-          const updated = payload.new;
-          setRoom(updated);
+          const updated = payload.new as Room;
+          if (updated && updated.status) {
+            setRoom(updated);
 
-          // When status becomes "active", go to player question screen
-          if (updated.status === "active") {
-            navigate(`/play/${roomId}`);
+            // When status becomes "active", go to player question screen
+            if (updated.status === "active") {
+              navigate(`/play/${roomId}`);
+            }
           }
         }
       )

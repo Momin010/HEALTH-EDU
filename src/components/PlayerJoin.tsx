@@ -9,7 +9,6 @@ const PlayerJoin = () => {
   const { user, profile } = useAuth();
   const [playerName, setPlayerName] = useState('');
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -20,7 +19,6 @@ const PlayerJoin = () => {
   const joinRoom = async () => {
     if (!user || !playerName.trim() || !roomCode) return;
 
-    setIsLoading(true);
     setError('');
 
     // Check if room exists
@@ -32,13 +30,11 @@ const PlayerJoin = () => {
 
     if (roomError || !room) {
       setError('Room not found');
-      setIsLoading(false);
       return;
     }
 
     if (room.status !== 'waiting' && room.status !== 'active') {
       setError('Room is not available');
-      setIsLoading(false);
       return;
     }
 
@@ -71,7 +67,6 @@ const PlayerJoin = () => {
 
     if (playerError) {
       setError('Failed to join room');
-      setIsLoading(false);
       return;
     }
 

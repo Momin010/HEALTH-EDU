@@ -27,11 +27,10 @@ const QuizPlayer = () => {
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(30);
-  const [score, setScore] = useState<number>(0);
   const [players, setPlayers] = useState<any[]>([]);
 
   const questionChannelRef = useRef<any>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!user || !roomCode || roomCode === 'undefined') {
@@ -58,7 +57,7 @@ const QuizPlayer = () => {
     }
 
     // Get or create player
-    const { data: playerData, error: playerError } = await supabase
+    const { error: playerError } = await supabase
       .from('players')
       .select('id')
       .eq('room_id', roomData.id)
@@ -101,13 +100,15 @@ const QuizPlayer = () => {
           filter: `room_id=eq.${roomId}`,
         },
         (payload) => {
-          const cq: CurrentQuestion = payload.new;
-          const question = allQuestions.find((q) => q.id === cq.question_id);
-          if (question) {
-            setCurrentQuestion(question);
-            setSelectedAnswer(null);
-            setTimeLeft(cq.time_limit);
-            startTimer(cq.time_limit);
+          const cq = payload.new as CurrentQuestion;
+          if (cq && cq.question_id) {
+            const question = allQuestions.find((q) => q.id === cq.question_id);
+            if (question) {
+              setCurrentQuestion(question);
+              setSelectedAnswer(null);
+              setTimeLeft(cq.time_limit);
+              startTimer(cq.time_limit);
+            }
           }
         }
       )
@@ -170,9 +171,9 @@ const QuizPlayer = () => {
         id: player.id,
         name: player.name,
         score: player.score,
-        profiles: player.profiles ? {
-          full_name: player.profiles.full_name,
-          email: player.profiles.email
+        profiles: player.profiles && player.profiles.length > 0 ? {
+          full_name: player.profiles[0].full_name,
+          email: player.profiles[0].email
         } : undefined
       }));
       setPlayers(transformedPlayers);

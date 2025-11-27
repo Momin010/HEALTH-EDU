@@ -117,7 +117,7 @@ const HostDashboard = () => {
           table: 'rooms',
           filter: `host_id=eq.${user?.id}`
         },
-        async (payload) => {
+        async () => {
           // We re-load the existing room(s) to get newest state
           await loadExistingRoom();
         }
@@ -348,7 +348,7 @@ const HostDashboard = () => {
     if (!room) return;
 
     // Call RPC that advances the current_question_index server-side
-    const { data: rpcData, error } = await supabase.rpc('next_question', {
+    const { error } = await supabase.rpc('next_question', {
       room_uuid: room.id
     });
 
