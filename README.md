@@ -41,18 +41,20 @@ A real-time quiz application built with React and Supabase, similar to Kahoot fo
 ## Usage
 
 ### For Teachers (Require Authentication)
-1. **Sign Up/Login**: Go to the main page and authenticate
-2. **Create Room**: Click "Create Room" to generate a room code
-3. **Add Questions**: Create multiple choice (4 options) or true/false questions
-4. **Share Access**: Give students the direct link: `yoursite.com/student`
-5. **Start Quiz**: Click "Start Quiz" when ready
+1. **Choose Role**: Visit main page, click "I'm a Teacher"
+2. **Sign Up/Login**: Authenticate with your account
+3. **Create Room**: Click "Create Room" to generate a room code
+4. **Add Questions**: Create multiple choice (4 options) or true/false questions
+5. **Share Access**: Give students the direct link: `yoursite.com/student`
+6. **Start Quiz**: Click "Start Quiz" when ready
 
 ### For Students (No Authentication Required)
-1. **Enter Room**: Go to `yoursite.com/student` or `/join/{room_code}`
-2. **Choose Name**: Enter your display name (no account needed)
-3. **Session Persistence**: Stay in the game even after page refresh
-4. **Play Quiz**: Answer questions as they appear in real-time
-5. **View Results**: See live leaderboard and final scores
+1. **Choose Role**: Visit main page, click "I'm a Student"
+2. **Enter Room**: Go to student page and enter room code
+3. **Choose Name**: Enter your display name (no account needed)
+4. **Session Persistence**: Stay in the game even after page refresh
+5. **Play Quiz**: Answer questions as they appear in real-time
+6. **View Results**: See live leaderboard and final scores
 
 ## Authentication Model
 

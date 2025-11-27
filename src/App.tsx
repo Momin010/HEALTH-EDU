@@ -21,8 +21,10 @@ function AppContent() {
 
   return (
     <Routes>
+      {/* Public landing page */}
+      <Route path="/" element={<LandingPage />} />
+
       {/* Teacher routes - require authentication */}
-      <Route path="/" element={user ? <LandingPage /> : <Auth onAuthSuccess={() => {}} />} />
       <Route path="/host" element={user ? <HostDashboard /> : <Auth onAuthSuccess={() => {}} />} />
 
       {/* Student routes - no authentication required */}
