@@ -260,7 +260,21 @@ const HostDashboard = () => {
 
     // reflect locally and broadcast first question
     setRoom((r) => (r ? { ...r, status: 'active' } : r));
-    await broadcastNextQuestion(room.id);
+    
+    // Ensure questions are loaded before broadcasting
+    if (dbQuestions.length === 0) {
+      const { data: loadedQuestions } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('room_id', room.id)
+        .order('order_index');
+      setDbQuestions(loadedQuestions || []);
+    }
+    
+    // Small delay to ensure database is updated
+    setTimeout(async () => {
+      await broadcastNextQuestion(room.id);
+    }, 500);
     setIsLoading(false);
   };
 
@@ -292,21 +306,38 @@ const HostDashboard = () => {
     const currentIndex = roomData?.current_question_index ?? 0;
     const nextQuestion = questionsToUse.find((q) => q.order_index === currentIndex);
 
+    console.log('Broadcasting question:', { currentIndex, nextQuestion });
+    
     if (nextQuestion) {
-      const { error } = await supabase
+      // First clear any existing current_question for this room
+      await supabase
         .from('current_question')
-        .upsert([
+        .delete()
+        .eq('room_id', rId);
+      
+      // Then insert the new current question
+      const { data, error } = await supabase
+        .from('current_question')
+        .insert([
           {
             room_id: rId,
             question_id: nextQuestion.id,
             question_index: currentIndex,
             time_limit: QUIZ_CONFIG.TIME_LIMIT
           }
-        ]);
+        ])
+        .select();
 
+      console.log('Broadcast result:', { data, error });
+      
       if (error) {
         console.error('Error broadcasting question:', error);
+      } else {
+        console.log('Successfully broadcast question:', data);
       }
+    } else {
+      console.log('No next question found for index:', currentIndex);
+      console.log('Available questions:', questionsToUse);
     }
   };
 
@@ -374,13 +405,21 @@ const HostDashboard = () => {
               <p className="text-gray-600 mb-4">
                 10 kysymystä itsehoidosta ja lääkkeistä. Opiskelijoilla on 30 sekuntia aikaa per kysymys.
               </p>
-              <button
-                onClick={startQuiz}
-                disabled={isLoading}
-                className="bg-green-500 text-white px-6 py-3 rounded text-lg hover:bg-green-600 disabled:bg-gray-300"
-              >
-                {isLoading ? 'Aloitetaan...' : 'Aloita Quiz'}
-              </button>
+              <div className="space-x-4">
+                <button
+                  onClick={startQuiz}
+                  disabled={isLoading}
+                  className="bg-green-500 text-white px-6 py-3 rounded text-lg hover:bg-green-600 disabled:bg-gray-300"
+                >
+                  {isLoading ? 'Aloitetaan...' : 'Aloita Quiz'}
+                </button>
+                <button
+                  onClick={() => broadcastNextQuestion(room.id)}
+                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                >
+                  Testaa Kysymyksen Lähetys
+                </button>
+              </div>
             </div>
           )}
 

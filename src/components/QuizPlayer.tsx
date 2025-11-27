@@ -133,26 +133,30 @@ const QuizPlayer = () => {
           filter: `room_id=eq.${roomId}`,
         },
         (payload) => {
-          console.log('Current question update:', payload);
+          console.log('🔥 CURRENT QUESTION UPDATE:', payload);
+          console.log('All questions available:', allQuestions);
           const cq = payload.new as CurrentQuestion;
           if (cq && cq.question_id) {
+            console.log('Looking for question with ID:', cq.question_id);
             const question = allQuestions.find((q) => q.id === cq.question_id);
             if (question) {
-              console.log('Found question:', question);
+              console.log('✅ FOUND QUESTION:', question);
               setCurrentQuestion(question);
               setSelectedAnswer(null);
               setTimeLeft(cq.time_limit || QUIZ_CONFIG.TIME_LIMIT);
               startTimer(QUIZ_CONFIG.TIME_LIMIT);
             } else {
-              console.log('Question not found for ID:', cq.question_id);
+              console.log('❌ Question not found for ID:', cq.question_id);
               console.log('Available questions:', allQuestions);
             }
           } else {
-            console.log('No question_id in payload:', cq);
+            console.log('❌ No question_id in payload:', cq);
           }
         }
       )
       .subscribe();
+
+    console.log('🎯 Subscribed to current_question for room:', roomId);
 
     questionChannelRef.current = channel;
   };
