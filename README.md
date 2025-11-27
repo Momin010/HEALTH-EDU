@@ -15,28 +15,49 @@ A real-time quiz application built with React and Supabase, similar to Kahoot fo
 ## Setup
 
 1. **Clone and Install Dependencies**
-   ```bash
-   cd kahooot-clone
-   npm install
-   ```
+    ```bash
+    cd kahooot-clone
+    npm install
+    ```
 
 2. **Set up Supabase**
-   - Create a new Supabase project
-   - Run the SQL schema from `supabase-schema.sql` in your Supabase SQL editor
-   - Copy your project URL and anon key
+    - Create a new Supabase project at https://supabase.com
+    - Go to the **SQL Editor** in your Supabase dashboard
+    - Copy the **entire contents** of `supabase-schema.sql` and paste it
+    - Click **Run** to execute the schema
+    - This creates all tables and **disables authentication requirements**
+    - Go to **Settings → API** and copy your project URL and anon key
 
 3. **Environment Variables**
-   - Copy `.env.example` to `.env`
-   - Fill in your Supabase credentials:
-     ```
-     VITE_SUPABASE_URL=your_supabase_project_url
-     VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-     ```
+    - Copy `.env.example` to `.env`
+    - Fill in your Supabase credentials:
+      ```
+      VITE_SUPABASE_URL=https://your-project-id.supabase.co
+      VITE_SUPABASE_ANON_KEY=your-anon-key-here
+      ```
 
-4. **Run the Application**
-   ```bash
-   npm run dev
-   ```
+4. **Verify Setup (Important!)**
+    - After running the schema, check your Supabase dashboard
+    - Go to **Table Editor** and confirm these tables exist:
+      - ✅ `rooms`
+      - ✅ `questions`
+      - ✅ `players`
+      - ✅ `answers`
+      - ✅ `current_question`
+    - **CRITICAL**: For each table, click the table name → **RLS Disabled** should show
+    - If you still get 401 errors, manually disable RLS:
+      ```sql
+      ALTER TABLE rooms DISABLE ROW LEVEL SECURITY;
+      ALTER TABLE questions DISABLE ROW LEVEL SECURITY;
+      ALTER TABLE players DISABLE ROW LEVEL SECURITY;
+      ALTER TABLE answers DISABLE ROW LEVEL SECURITY;
+      ALTER TABLE current_question DISABLE ROW LEVEL SECURITY;
+      ```
+
+5. **Run the Application**
+    ```bash
+    npm run dev
+    ```
 
 ## Usage
 

@@ -36,8 +36,11 @@ const PlayerJoin = () => {
         .eq('code', roomCode.toUpperCase())
         .single();
 
+      console.log('Room check:', { room, roomError, roomCode: roomCode.toUpperCase() });
+
       if (roomError || !room) {
-        setError('Room not found');
+        console.error('Room error:', roomError);
+        setError('Room not found: ' + (roomError?.message || 'Unknown error'));
         setIsLoading(false);
         return;
       }
@@ -49,12 +52,14 @@ const PlayerJoin = () => {
       }
 
       // Check if player with this name already exists in room
-      const { data: existingPlayer } = await supabase
+      const { data: existingPlayer, error: checkError } = await supabase
         .from('players')
         .select('id')
         .eq('room_id', room.id)
         .eq('name', playerName.trim())
-        .single();
+        .maybeSingle(); // Use maybeSingle instead of single to avoid 406 errors
+
+      console.log('Checking existing player:', { existingPlayer, checkError });
 
       let playerId: string;
 
@@ -79,8 +84,11 @@ const PlayerJoin = () => {
           .select()
           .single();
 
+        console.log('Creating new player:', { newPlayer, playerError });
+
         if (playerError || !newPlayer) {
-          setError('Failed to join room');
+          console.error('Player creation error:', playerError);
+          setError('Failed to join room: ' + (playerError?.message || 'Unknown error'));
           setIsLoading(false);
           return;
         }
