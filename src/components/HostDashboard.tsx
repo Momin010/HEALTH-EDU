@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
 
 interface Question {
   id?: string;
@@ -23,14 +22,15 @@ interface Player {
   id: string;
   name: string;
   score: number;
-  profiles?: {
-    full_name?: string;
-    email?: string;
-  };
+}
+
+interface HostSession {
+  roomId: string;
+  roomCode: string;
+  timestamp: number;
 }
 
 const HostDashboard = () => {
-  const { user, profile } = useAuth();
   const navigate = useNavigate();
 
   const [room, setRoom] = useState<Room | null>(null);
@@ -49,54 +49,47 @@ const HostDashboard = () => {
   const roomChannelRef = useRef<any | null>(null);
   const playersChannelRef = useRef<any | null>(null);
 
-  // Ensure only teachers reach this page
+  // Load existing host session on mount
   useEffect(() => {
-    if (!user || profile?.role !== 'teacher') {
-      navigate('/');
-      return;
+    const savedSession = localStorage.getItem('host_session');
+    if (savedSession) {
+      const session: HostSession = JSON.parse(savedSession);
+      // Check if session is recent (within 24 hours)
+      if (Date.now() - session.timestamp < 24 * 60 * 60 * 1000) {
+        loadExistingRoom(session.roomId);
+      } else {
+        localStorage.removeItem('host_session');
+      }
     }
-
-    // Load any existing waiting room for this host
-    loadExistingRoom();
 
     // cleanup on unmount
     return () => {
       cleanupSubscriptions();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, profile]);
+  }, []);
 
-  // load the most recent waiting room for this host
-  const loadExistingRoom = async () => {
-    if (!user) return;
-
+  // load existing room by ID
+  const loadExistingRoom = async (roomId: string) => {
     const { data, error } = await supabase
       .from('rooms')
       .select('*')
-      .eq('host_id', user.id)
-      .eq('status', 'waiting')
-      .order('created_at', { ascending: false })
-      .limit(1)
+      .eq('id', roomId)
       .single();
 
     if (error && error.code !== 'PGRST116') {
       console.error('Error loading existing room:', error);
+      localStorage.removeItem('host_session');
       return;
     }
 
-    if (data) {
+    if (data && (data.status === 'waiting' || data.status === 'active')) {
       setRoom(data);
       await loadQuestions(data.id);
       await loadPlayers(data.id);
-
-      // (re)subscribe to updates scoped to this room id
       subscribeToRoomUpdates(data.id);
     } else {
-      // No existing waiting room - clear any previous state & subscriptions
-      setRoom(null);
-      setQuestions([]);
-      setPlayers([]);
-      cleanupSubscriptions();
+      // Room not available, clear session
+      localStorage.removeItem('host_session');
     }
   };
 
@@ -226,7 +219,6 @@ const HostDashboard = () => {
   };
 
   const createRoom = async () => {
-    if (!user) return;
     setIsLoading(true);
 
     const code = generateRoomCode();
@@ -235,7 +227,6 @@ const HostDashboard = () => {
       .insert([
         {
           code,
-          host_id: user.id,
           status: 'waiting',
           current_question_index: 0
         }
@@ -248,6 +239,14 @@ const HostDashboard = () => {
       setIsLoading(false);
       return;
     }
+
+    // Save host session to localStorage
+    const session: HostSession = {
+      roomId: data.id,
+      roomCode: code,
+      timestamp: Date.now()
+    };
+    localStorage.setItem('host_session', JSON.stringify(session));
 
     // set room and subscribe to updates for this new room
     setRoom(data);
