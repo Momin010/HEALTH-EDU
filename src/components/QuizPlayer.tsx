@@ -30,7 +30,7 @@ const QuizPlayer = () => {
   const [players, setPlayers] = useState<any[]>([]);
 
   const questionChannelRef = useRef<any>(null);
-  const timerRef = useRef<number | null>(null);
+  const timerRef = useRef<any>(null);
 
   useEffect(() => {
     if (!user || !roomCode || roomCode === 'undefined') {
