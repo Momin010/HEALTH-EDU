@@ -30,12 +30,11 @@ const QuizPlayer = () => {
   const [timeLeft, setTimeLeft] = useState(30);
   const [players, setPlayers] = useState<Player[]>([]);
   const [roomStatus, setRoomStatus] = useState<'waiting' | 'active' | 'finished'>('waiting');
-  const [roomId, setRoomId] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!user || !roomCode) {
+    if (!user || !roomCode || roomCode === 'undefined') {
       navigate('/');
       return;
     }
@@ -57,7 +56,7 @@ const QuizPlayer = () => {
         return;
       }
 
-      setRoomId(roomData.id);
+      // roomId is now stored in state
       setRoomStatus(roomData.status);
 
       // Get or create player
@@ -65,7 +64,7 @@ const QuizPlayer = () => {
         .from('players')
         .select('id')
         .eq('room_id', roomData.id)
-        .eq('user_id', user.id)
+        .eq('user_id', user!.id)
         .single();
 
       if (playerError && playerError.code !== 'PGRST116') {
@@ -194,7 +193,7 @@ const QuizPlayer = () => {
         id,
         name,
         score,
-        profiles (
+        profiles!inner (
           full_name,
           email
         )
@@ -204,7 +203,17 @@ const QuizPlayer = () => {
       .order('score', { ascending: false });
 
     if (data) {
-      setPlayers(data);
+      // Transform the data to match our Player interface
+      const transformedPlayers: Player[] = data.map(player => ({
+        id: player.id,
+        name: player.name,
+        score: player.score,
+        profiles: player.profiles ? {
+          full_name: player.profiles.full_name,
+          email: player.profiles.email
+        } : undefined
+      }));
+      setPlayers(transformedPlayers);
     }
   };
 

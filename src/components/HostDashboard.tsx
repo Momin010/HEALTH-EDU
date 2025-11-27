@@ -32,7 +32,6 @@ const HostDashboard = () => {
     order_index: 0
   });
   const [players, setPlayers] = useState<any[]>([]);
-  const [currentQuestionData, setCurrentQuestionData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -75,10 +74,8 @@ const HostDashboard = () => {
         schema: 'public',
         table: 'rooms',
         filter: `host_id=eq.${user.id}`
-      }, (payload) => {
-        if (payload.new) {
-          setRoom(payload.new as Room);
-        }
+      }, () => {
+        loadExistingRoom();
       })
       .subscribe();
 
@@ -89,7 +86,7 @@ const HostDashboard = () => {
         event: '*',
         schema: 'public',
         table: 'players'
-      }, (payload) => {
+      }, () => {
         if (room) {
           loadPlayers(room.id);
         }
