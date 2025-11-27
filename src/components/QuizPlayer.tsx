@@ -124,10 +124,7 @@ const QuizPlayer = () => {
       .single();
 
     if (data?.questions) {
-      const question = data.questions as Question;
-      // Remove correct_answer from question data for players
-      const { correct_answer, ...questionForPlayer } = question;
-      setCurrentQuestion(questionForPlayer);
+      setCurrentQuestion(data.questions as Question);
       setSelectedAnswer(null);
       setHasAnswered(false);
       setTimeLeft(30);
@@ -152,8 +149,15 @@ const QuizPlayer = () => {
 
     setHasAnswered(true);
 
-    // Check if answer is correct
-    const isCorrect = selectedAnswer === currentQuestion.correct_answer;
+    // Fetch correct answer
+    const { data: questionData } = await supabase
+      .from('questions')
+      .select('correct_answer')
+      .eq('id', currentQuestion.id)
+      .single();
+
+    const correctAnswer = questionData?.correct_answer;
+    const isCorrect = selectedAnswer === correctAnswer;
 
     // Submit answer
     await supabase
@@ -167,9 +171,17 @@ const QuizPlayer = () => {
 
     // Update score if correct
     if (isCorrect) {
+      const { data: playerData } = await supabase
+        .from('players')
+        .select('score')
+        .eq('id', playerId)
+        .single();
+
+      const newScore = (playerData?.score || 0) + 10;
+
       await supabase
         .from('players')
-        .update({ score: supabase.sql`score + 10` })
+        .update({ score: newScore })
         .eq('id', playerId);
     }
   };

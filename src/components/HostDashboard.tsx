@@ -9,14 +9,6 @@ interface Question {
   type: 'multiple_choice' | 'true_false';
 }
 
-interface QuestionDB {
-  id: string;
-  question_text: string;
-  options: string[];
-  correct_answer: number;
-  type: 'multiple_choice' | 'true_false';
-}
-
 const HostDashboard = () => {
   const [roomCode, setRoomCode] = useState('');
   const [questions, setQuestions] = useState<Question[]>([]);
