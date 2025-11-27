@@ -93,53 +93,53 @@ const HostDashboard = () => {
     }
   };
 
-  // subscribe to room-level updates (for this host) and player updates (for the room)
-  // we pass a roomId so the player subscription is scoped and doesn't rely on closures
-  const subscribeToRoomUpdates = (roomId?: string) => {
+  // subscribe to room-level updates and player updates for the room
+  const subscribeToRoomUpdates = (roomId: string) => {
     // cleanup any previous channels first
     cleanupSubscriptions();
 
-    // Subscribe to changes on the rooms table for this host (e.g., status changes)
+    // Subscribe to changes on the rooms table for this room
     const roomChannel = supabase
-      .channel(`room_updates_host_${user?.id ?? 'unknown'}`)
+      .channel(`room_updates_${roomId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'rooms',
-          filter: `host_id=eq.${user?.id}`
+          filter: `id=eq.${roomId}`
         },
-        async () => {
-          // We re-load the existing room(s) to get newest state
-          await loadExistingRoom();
+        async (payload) => {
+          // Update room data locally
+          if (payload.new && typeof payload.new === 'object' && 'id' in payload.new) {
+            const updatedRoom = payload.new as Room;
+            setRoom(updatedRoom);
+          }
         }
       )
       .subscribe();
 
     roomChannelRef.current = roomChannel;
 
-    // If we have a roomId, subscribe to player changes for that room
-    if (roomId) {
-      const playersChannel = supabase
-        .channel(`players_updates_room_${roomId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'players',
-            filter: `room_id=eq.${roomId}`
-          },
-          async () => {
-            // reload players when changes occur
-            await loadPlayers(roomId);
-          }
-        )
-        .subscribe();
+    // Subscribe to player changes for this room
+    const playersChannel = supabase
+      .channel(`players_updates_room_${roomId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'players',
+          filter: `room_id=eq.${roomId}`
+        },
+        async () => {
+          // reload players when changes occur
+          await loadPlayers(roomId);
+        }
+      )
+      .subscribe();
 
-      playersChannelRef.current = playersChannel;
-    }
+    playersChannelRef.current = playersChannel;
   };
 
   // unsubscribe channels if set
@@ -190,25 +190,13 @@ const HostDashboard = () => {
   const loadPlayers = async (roomId: string) => {
     const { data, error } = await supabase
       .from('players')
-      .select(`
-        id,
-        name,
-        score,
-        profiles(full_name, email)
-      `)
+      .select('id, name, score')
       .eq('room_id', roomId)
       .eq('is_connected', true)
       .order('score', { ascending: false });
 
     if (!error && data) {
-      // Map to Player interface (profiles may be nested)
-      const mapped: Player[] = data.map((p: any) => ({
-        id: p.id,
-        name: p.name,
-        score: p.score,
-        profiles: p.profiles ? { full_name: p.profiles.full_name, email: p.profiles.email } : undefined
-      }));
-      setPlayers(mapped);
+      setPlayers(data);
     } else if (error) {
       console.error('Error loading players:', error);
     }
