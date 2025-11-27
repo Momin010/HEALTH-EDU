@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -19,9 +19,20 @@ interface Room {
   current_question_index: number;
 }
 
+interface Player {
+  id: string;
+  name: string;
+  score: number;
+  profiles?: {
+    full_name?: string;
+    email?: string;
+  };
+}
+
 const HostDashboard = () => {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
+
   const [room, setRoom] = useState<Room | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState<Question>({
@@ -31,19 +42,31 @@ const HostDashboard = () => {
     type: 'multiple_choice',
     order_index: 0
   });
-  const [players, setPlayers] = useState<any[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // keep refs to subscriptions so we can unsubscribe correctly
+  const roomChannelRef = useRef<any | null>(null);
+  const playersChannelRef = useRef<any | null>(null);
+
+  // Ensure only teachers reach this page
   useEffect(() => {
     if (!user || profile?.role !== 'teacher') {
       navigate('/');
       return;
     }
 
+    // Load any existing waiting room for this host
     loadExistingRoom();
-    subscribeToRoomUpdates();
+
+    // cleanup on unmount
+    return () => {
+      cleanupSubscriptions();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, profile]);
 
+  // load the most recent waiting room for this host
   const loadExistingRoom = async () => {
     if (!user) return;
 
@@ -56,47 +79,105 @@ const HostDashboard = () => {
       .limit(1)
       .single();
 
-    if (data && !error) {
+    if (error && error.code !== 'PGRST116') {
+      console.error('Error loading existing room:', error);
+      return;
+    }
+
+    if (data) {
       setRoom(data);
-      loadQuestions(data.id);
-      loadPlayers(data.id);
+      await loadQuestions(data.id);
+      await loadPlayers(data.id);
+
+      // (re)subscribe to updates scoped to this room id
+      subscribeToRoomUpdates(data.id);
+    } else {
+      // No existing waiting room - clear any previous state & subscriptions
+      setRoom(null);
+      setQuestions([]);
+      setPlayers([]);
+      cleanupSubscriptions();
     }
   };
 
-  const subscribeToRoomUpdates = () => {
-    if (!user) return;
+  // subscribe to room-level updates (for this host) and player updates (for the room)
+  // we pass a roomId so the player subscription is scoped and doesn't rely on closures
+  const subscribeToRoomUpdates = (roomId?: string) => {
+    // cleanup any previous channels first
+    cleanupSubscriptions();
 
-    // Subscribe to room changes
-    const roomSubscription = supabase
-      .channel('room_updates')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'rooms',
-        filter: `host_id=eq.${user.id}`
-      }, () => {
-        loadExistingRoom();
-      })
-      .subscribe();
-
-    // Subscribe to player changes
-    const playerSubscription = supabase
-      .channel('player_updates')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'players'
-      }, () => {
-        if (room) {
-          loadPlayers(room.id);
+    // Subscribe to changes on the rooms table for this host (e.g., status changes)
+    const roomChannel = supabase
+      .channel(`room_updates_host_${user?.id ?? 'unknown'}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'rooms',
+          filter: `host_id=eq.${user?.id}`
+        },
+        async (payload) => {
+          // We re-load the existing room(s) to get newest state
+          await loadExistingRoom();
         }
-      })
+      )
       .subscribe();
 
-    return () => {
-      roomSubscription.unsubscribe();
-      playerSubscription.unsubscribe();
-    };
+    roomChannelRef.current = roomChannel;
+
+    // If we have a roomId, subscribe to player changes for that room
+    if (roomId) {
+      const playersChannel = supabase
+        .channel(`players_updates_room_${roomId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'players',
+            filter: `room_id=eq.${roomId}`
+          },
+          async () => {
+            // reload players when changes occur
+            await loadPlayers(roomId);
+          }
+        )
+        .subscribe();
+
+      playersChannelRef.current = playersChannel;
+    }
+  };
+
+  // unsubscribe channels if set
+  const cleanupSubscriptions = () => {
+    try {
+      if (roomChannelRef.current) {
+        // Supabase channel has unsubscribe or remove
+        // call unsubscribe if available
+        if (typeof roomChannelRef.current.unsubscribe === 'function') {
+          roomChannelRef.current.unsubscribe();
+        } else if (typeof roomChannelRef.current.remove === 'function') {
+          roomChannelRef.current.remove();
+        }
+        roomChannelRef.current = null;
+      }
+    } catch (e) {
+      console.warn('Error unsubscribing room channel', e);
+    }
+
+    try {
+      if (playersChannelRef.current) {
+        if (typeof playersChannelRef.current.unsubscribe === 'function') {
+          playersChannelRef.current.unsubscribe();
+        } else if (typeof playersChannelRef.current.remove === 'function') {
+          playersChannelRef.current.remove();
+        }
+        playersChannelRef.current = null;
+      }
+    } catch (e) {
+      console.warn('Error unsubscribing players channel', e);
+    }
   };
 
   const loadQuestions = async (roomId: string) => {
@@ -106,8 +187,10 @@ const HostDashboard = () => {
       .eq('room_id', roomId)
       .order('order_index');
 
-    if (data && !error) {
+    if (!error && data) {
       setQuestions(data);
+    } else if (error) {
+      console.error('Error loading questions:', error);
     }
   };
 
@@ -121,10 +204,20 @@ const HostDashboard = () => {
         profiles(full_name, email)
       `)
       .eq('room_id', roomId)
-      .eq('is_connected', true);
+      .eq('is_connected', true)
+      .order('score', { ascending: false });
 
-    if (data && !error) {
-      setPlayers(data);
+    if (!error && data) {
+      // Map to Player interface (profiles may be nested)
+      const mapped: Player[] = data.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        score: p.score,
+        profiles: p.profiles ? { full_name: p.profiles.full_name, email: p.profiles.email } : undefined
+      }));
+      setPlayers(mapped);
+    } else if (error) {
+      console.error('Error loading players:', error);
     }
   };
 
@@ -134,17 +227,19 @@ const HostDashboard = () => {
 
   const createRoom = async () => {
     if (!user) return;
-
     setIsLoading(true);
+
     const code = generateRoomCode();
     const { data, error } = await supabase
       .from('rooms')
-      .insert([{
-        code,
-        host_id: user.id,
-        status: 'waiting',
-        current_question_index: 0
-      }])
+      .insert([
+        {
+          code,
+          host_id: user.id,
+          status: 'waiting',
+          current_question_index: 0
+        }
+      ])
       .select()
       .single();
 
@@ -154,7 +249,12 @@ const HostDashboard = () => {
       return;
     }
 
+    // set room and subscribe to updates for this new room
     setRoom(data);
+    await loadQuestions(data.id);
+    await loadPlayers(data.id);
+    subscribeToRoomUpdates(data.id);
+
     setIsLoading(false);
   };
 
@@ -164,11 +264,13 @@ const HostDashboard = () => {
     setIsLoading(true);
     const { data, error } = await supabase
       .from('questions')
-      .insert([{
-        room_id: room.id,
-        ...currentQuestion,
-        order_index: questions.length
-      }])
+      .insert([
+        {
+          room_id: room.id,
+          ...currentQuestion,
+          order_index: questions.length // keep zero-based index
+        }
+      ])
       .select()
       .single();
 
@@ -178,7 +280,7 @@ const HostDashboard = () => {
       return;
     }
 
-    setQuestions([...questions, data]);
+    setQuestions((prev) => [...prev, data]);
     setCurrentQuestion({
       question_text: '',
       options: ['', '', '', ''],
@@ -193,45 +295,79 @@ const HostDashboard = () => {
     if (!room) return;
 
     setIsLoading(true);
-    await supabase
+    const { error } = await supabase
       .from('rooms')
       .update({ status: 'active' })
       .eq('id', room.id);
 
-    // Start with first question
-    await broadcastNextQuestion();
+    if (error) {
+      console.error('Error starting quiz:', error);
+      setIsLoading(false);
+      return;
+    }
+
+    // reflect locally and broadcast first question
+    setRoom((r) => (r ? { ...r, status: 'active' } : r));
+    await broadcastNextQuestion(room.id);
     setIsLoading(false);
   };
 
-  const broadcastNextQuestion = async () => {
-    if (!room || questions.length === 0) return;
+  const broadcastNextQuestion = async (roomId?: string) => {
+    const rId = roomId ?? room?.id;
+    if (!rId || questions.length === 0) return;
 
-    const currentIndex = room.current_question_index;
-    const nextQuestion = questions.find(q => q.order_index === currentIndex);
+    // reload room to get latest index if necessary
+    const { data: roomData } = await supabase
+      .from('rooms')
+      .select('current_question_index')
+      .eq('id', rId)
+      .single();
+
+    const currentIndex = roomData?.current_question_index ?? 0;
+    const nextQuestion = questions.find((q) => q.order_index === currentIndex);
 
     if (nextQuestion) {
-      await supabase
+      const { error } = await supabase
         .from('current_question')
-        .upsert([{
-          room_id: room.id,
-          question_id: nextQuestion.id,
-          question_index: currentIndex,
-          time_limit: 30
-        }]);
+        .upsert([
+          {
+            room_id: rId,
+            question_id: nextQuestion.id,
+            question_index: currentIndex,
+            time_limit: 30
+          }
+        ]);
+
+      if (error) {
+        console.error('Error broadcasting question:', error);
+      }
     }
   };
 
   const nextQuestion = async () => {
     if (!room) return;
 
-    const { data, error } = await supabase.rpc('next_question', {
+    // Call RPC that advances the current_question_index server-side
+    const { data: rpcData, error } = await supabase.rpc('next_question', {
       room_uuid: room.id
     });
 
-    if (!error && data) {
-      // Question advanced, broadcast next
-      await broadcastNextQuestion();
+    if (error) {
+      console.error('Error advancing question (rpc next_question):', error);
+      return;
     }
+
+    // After RPC, re-broadcast the now-current question
+    await broadcastNextQuestion(room.id);
+
+    // refresh room info locally (so UI like "Current Question: X of Y" updates)
+    const { data: freshRoom } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('id', room.id)
+      .single();
+
+    if (freshRoom) setRoom(freshRoom);
   };
 
   const handleQuestionTypeChange = (type: 'multiple_choice' | 'true_false') => {
@@ -263,8 +399,7 @@ const HostDashboard = () => {
             <h2 className="text-xl font-semibold mb-4">Room Code: {room.code}</h2>
             <p className="text-gray-600">Share this code with players to join the quiz.</p>
             <p className="text-sm text-gray-500 mt-2">
-              Status: <span className="capitalize font-semibold">{room.status}</span> |
-              Players: {players.length}
+              Status: <span className="capitalize font-semibold">{room.status}</span> | Players: {players.length}
             </p>
           </div>
 
@@ -290,7 +425,7 @@ const HostDashboard = () => {
                   <input
                     type="text"
                     value={currentQuestion.question_text}
-                    onChange={(e) => setCurrentQuestion({...currentQuestion, question_text: e.target.value})}
+                    onChange={(e) => setCurrentQuestion({ ...currentQuestion, question_text: e.target.value })}
                     className="w-full p-2 border rounded"
                     placeholder="Enter your question"
                   />
@@ -306,7 +441,7 @@ const HostDashboard = () => {
                             type="radio"
                             name="correct"
                             checked={currentQuestion.correct_answer === index}
-                            onChange={() => setCurrentQuestion({...currentQuestion, correct_answer: index})}
+                            onChange={() => setCurrentQuestion({ ...currentQuestion, correct_answer: index })}
                             className="ml-2"
                           />
                         </label>
@@ -316,7 +451,7 @@ const HostDashboard = () => {
                           onChange={(e) => {
                             const newOptions = [...currentQuestion.options];
                             newOptions[index] = e.target.value;
-                            setCurrentQuestion({...currentQuestion, options: newOptions});
+                            setCurrentQuestion({ ...currentQuestion, options: newOptions });
                           }}
                           className="w-full p-2 border rounded"
                           placeholder={`Option ${index + 1}`}
@@ -333,7 +468,7 @@ const HostDashboard = () => {
                           type="radio"
                           name="correct"
                           checked={currentQuestion.correct_answer === 0}
-                          onChange={() => setCurrentQuestion({...currentQuestion, correct_answer: 0})}
+                          onChange={() => setCurrentQuestion({ ...currentQuestion, correct_answer: 0 })}
                         />
                         True
                       </label>
@@ -342,7 +477,7 @@ const HostDashboard = () => {
                           type="radio"
                           name="correct"
                           checked={currentQuestion.correct_answer === 1}
-                          onChange={() => setCurrentQuestion({...currentQuestion, correct_answer: 1})}
+                          onChange={() => setCurrentQuestion({ ...currentQuestion, correct_answer: 1 })}
                         />
                         False
                       </label>
@@ -363,7 +498,7 @@ const HostDashboard = () => {
                 <div className="mt-6">
                   <h3 className="text-lg font-semibold mb-2">Questions ({questions.length})</h3>
                   <ul className="space-y-2">
-                    {questions.map((q, index) => (
+                    {questions.map((q) => (
                       <li key={q.id} className="p-2 bg-gray-50 rounded">
                         {q.question_text}
                       </li>
@@ -392,10 +527,7 @@ const HostDashboard = () => {
               <p className="text-gray-600 mb-4">
                 Current Question: {room.current_question_index + 1} of {questions.length}
               </p>
-              <button
-                onClick={nextQuestion}
-                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-              >
+              <button onClick={nextQuestion} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
                 Next Question
               </button>
             </div>

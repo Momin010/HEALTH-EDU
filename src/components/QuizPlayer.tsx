@@ -1,37 +1,37 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { useEffect, useState, useRef } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { supabase } from "../lib/supabase";
 import { useAuth } from '../contexts/AuthContext';
 
 interface Question {
   id: string;
   question_text: string;
   options: string[];
-  type: 'multiple_choice' | 'true_false';
+  correct_answer: number;
+  type: "multiple_choice" | "true_false";
+  order_index: number;
 }
 
-interface Player {
-  id: string;
-  name: string;
-  score: number;
-  profiles?: {
-    full_name: string;
-    email: string;
-  };
+interface CurrentQuestion {
+  question_id: string;
+  question_index: number;
+  time_limit: number;
 }
 
 const QuizPlayer = () => {
   const { roomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
+  const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
-  const [hasAnswered, setHasAnswered] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(30);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [roomStatus, setRoomStatus] = useState<'waiting' | 'active' | 'finished'>('waiting');
-  const [playerId, setPlayerId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [timeLeft, setTimeLeft] = useState<number>(30);
+  const [score, setScore] = useState<number>(0);
+  const [players, setPlayers] = useState<any[]>([]);
+
+  const questionChannelRef = useRef<any>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!user || !roomCode || roomCode === 'undefined') {
@@ -43,147 +43,109 @@ const QuizPlayer = () => {
   }, [user, roomCode]);
 
   const initializePlayer = async () => {
-    try {
-      // Get room
-      const { data: roomData, error: roomError } = await supabase
-        .from('rooms')
-        .select('id, status')
-        .eq('code', roomCode.toUpperCase())
-        .single();
+    if (!user || !roomCode) return;
 
-      if (roomError || !roomData) {
-        navigate('/');
-        return;
-      }
-
-      // roomId is now stored in state
-      setRoomStatus(roomData.status);
-
-      // Get or create player
-      const { data: playerData, error: playerError } = await supabase
-        .from('players')
-        .select('id')
-        .eq('room_id', roomData.id)
-        .eq('user_id', user!.id)
-        .single();
-
-      if (playerError && playerError.code !== 'PGRST116') {
-        console.error('Error finding player:', playerError);
-        navigate('/');
-        return;
-      }
-
-      if (playerData) {
-        setPlayerId(playerData.id);
-      } else {
-        // Player not found, redirect to join
-        navigate(`/join/${roomCode}`);
-        return;
-      }
-
-      // Subscribe to updates
-      subscribeToRoom(roomData.id);
-      subscribeToPlayers(roomData.id);
-      subscribeToCurrentQuestion(roomData.id);
-
-      // Load initial data
-      loadPlayers(roomData.id);
-      fetchCurrentQuestion(roomData.id);
-
-      setIsLoading(false);
-    } catch (error) {
-      console.error('Error initializing player:', error);
-      navigate('/');
-    }
-  };
-
-  const subscribeToRoom = (roomId: string) => {
-    const subscription = supabase
-      .channel('room_status')
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'rooms',
-        filter: `id=eq.${roomId}`
-      }, (payload) => {
-        setRoomStatus(payload.new.status);
-      })
-      .subscribe();
-
-    return () => subscription.unsubscribe();
-  };
-
-  const subscribeToPlayers = (roomId: string) => {
-    const subscription = supabase
-      .channel('players_update')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'players',
-        filter: `room_id=eq.${roomId}`
-      }, () => {
-        loadPlayers(roomId);
-      })
-      .subscribe();
-
-    return () => subscription.unsubscribe();
-  };
-
-  const subscribeToCurrentQuestion = (roomId: string) => {
-    const subscription = supabase
-      .channel('current_question_update')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'current_question',
-        filter: `room_id=eq.${roomId}`
-      }, () => {
-        fetchCurrentQuestion(roomId);
-      })
-      .subscribe();
-
-    return () => subscription.unsubscribe();
-  };
-
-  useEffect(() => {
-    if (currentQuestion && !hasAnswered) {
-      const timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            submitAnswer();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-
-      return () => clearInterval(timer);
-    }
-  }, [currentQuestion, hasAnswered]);
-
-  const fetchCurrentQuestion = async (roomId: string) => {
-    const { data } = await supabase
-      .from('current_question')
-      .select(`
-        question_id,
-        questions (
-          id,
-          question_text,
-          options,
-          type
-        )
-      `)
-      .eq('room_id', roomId)
+    // Get room
+    const { data: roomData, error: roomError } = await supabase
+      .from('rooms')
+      .select('id')
+      .eq('code', roomCode.toUpperCase())
       .single();
 
-    if (data?.questions) {
-      setCurrentQuestion(data.questions as unknown as Question);
-      setSelectedAnswer(null);
-      setHasAnswered(false);
-      setTimeLeft(30);
-    } else {
-      setCurrentQuestion(null);
+    if (roomError || !roomData) {
+      navigate('/');
+      return;
     }
+
+    // Get or create player
+    const { data: playerData, error: playerError } = await supabase
+      .from('players')
+      .select('id')
+      .eq('room_id', roomData.id)
+      .eq('user_id', user!.id)
+      .single();
+
+    if (playerError && playerError.code !== 'PGRST116') {
+      console.error('Error finding player:', playerError);
+      return;
+    }
+
+    // Load questions and subscribe
+    loadQuestions(roomData.id);
+    subscribeToCurrentQuestion(roomData.id);
+    loadPlayers(roomData.id);
+  };
+
+  const loadQuestions = async (roomId: string) => {
+    const { data, error } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('room_id', roomId)
+      .order('order_index');
+
+    if (!error && data) {
+      setAllQuestions(data);
+    }
+  };
+
+  // Subscribe to current_question table
+  const subscribeToCurrentQuestion = (roomId: string) => {
+    const channel = supabase
+      .channel(`current_question_room_${roomId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'current_question',
+          filter: `room_id=eq.${roomId}`,
+        },
+        (payload) => {
+          const cq: CurrentQuestion = payload.new;
+          const question = allQuestions.find((q) => q.id === cq.question_id);
+          if (question) {
+            setCurrentQuestion(question);
+            setSelectedAnswer(null);
+            setTimeLeft(cq.time_limit);
+            startTimer(cq.time_limit);
+          }
+        }
+      )
+      .subscribe();
+
+    questionChannelRef.current = channel;
+  };
+
+  const startTimer = (duration: number) => {
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    let time = duration;
+    setTimeLeft(time);
+
+    timerRef.current = setInterval(() => {
+      time -= 1;
+      setTimeLeft(time);
+      if (time <= 0) {
+        clearInterval(timerRef.current!);
+        submitAnswer(); // auto-submit
+      }
+    }, 1000);
+  };
+
+  const submitAnswer = async () => {
+    if (!currentQuestion || selectedAnswer === null || !user) return;
+
+    // Submit answer
+    await supabase
+      .from('answers')
+      .insert([{
+        player_id: user.id, // This should be the player id, not user id
+        question_id: currentQuestion.id,
+        answer: selectedAnswer,
+        is_correct: selectedAnswer === currentQuestion.correct_answer
+      }]);
+
+    setSelectedAnswer(null);
   };
 
   const loadPlayers = async (roomId: string) => {
@@ -204,7 +166,7 @@ const QuizPlayer = () => {
 
     if (data) {
       // Transform the data to match our Player interface
-      const transformedPlayers: Player[] = data.map(player => ({
+      const transformedPlayers: any[] = data.map(player => ({
         id: player.id,
         name: player.name,
         score: player.score,
@@ -217,81 +179,18 @@ const QuizPlayer = () => {
     }
   };
 
-  const submitAnswer = async () => {
-    if (selectedAnswer === null || !currentQuestion || hasAnswered || !playerId) return;
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      questionChannelRef.current?.unsubscribe?.();
+    };
+  }, []);
 
-    setHasAnswered(true);
-
-    // Fetch correct answer
-    const { data: questionData } = await supabase
-      .from('questions')
-      .select('correct_answer')
-      .eq('id', currentQuestion.id)
-      .single();
-
-    const correctAnswer = questionData?.correct_answer;
-    const isCorrect = selectedAnswer === correctAnswer;
-
-    // Submit answer
-    await supabase
-      .from('answers')
-      .insert([{
-        player_id: playerId,
-        question_id: currentQuestion.id,
-        answer: selectedAnswer,
-        is_correct: isCorrect,
-        time_taken: 30 - timeLeft
-      }]);
-
-    // Update score if correct
-    if (isCorrect) {
-      const { data: playerData } = await supabase
-        .from('players')
-        .select('score')
-        .eq('id', playerId)
-        .single();
-
-      const newScore = (playerData?.score || 0) + 10;
-
-      await supabase
-        .from('players')
-        .update({ score: newScore })
-        .eq('id', playerId);
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
-
-  if (roomStatus === 'finished') {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-2xl">
-          <h1 className="text-3xl font-bold text-center mb-6">Quiz Ended!</h1>
-          <h2 className="text-xl font-semibold mb-4">Final Leaderboard</h2>
-          <div className="space-y-2">
-            {players.map((player, index) => (
-              <div key={player.id} className="flex justify-between items-center p-4 bg-gray-50 rounded">
-                <span className="font-semibold">#{index + 1} {player.name}</span>
-                <span className="text-lg font-bold">{player.score} points</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (roomStatus === 'waiting' || !currentQuestion) {
+  if (!currentQuestion) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="bg-white p-8 rounded-lg shadow-md text-center">
-          <h1 className="text-2xl font-bold mb-4">Waiting for quiz to start...</h1>
+          <h1 className="text-2xl font-bold mb-4">Waiting for next question...</h1>
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
         </div>
       </div>
@@ -317,38 +216,35 @@ const QuizPlayer = () => {
               {currentQuestion.options.map((option, index) => (
                 <button
                   key={index}
-                  onClick={() => !hasAnswered && setSelectedAnswer(index)}
-                  disabled={hasAnswered}
-                  className={`p-4 rounded-lg text-left transition-colors ${
+                  onClick={() => setSelectedAnswer(index)}
+                  disabled={selectedAnswer !== null}
+                  className={`w-full p-3 rounded border ${
                     selectedAnswer === index
-                      ? 'bg-blue-500 text-white'
-                      : hasAnswered
-                      ? 'bg-gray-200 cursor-not-allowed'
-                      : 'bg-gray-100 hover:bg-gray-200'
+                      ? selectedAnswer === currentQuestion.correct_answer
+                        ? "bg-green-400 text-white"
+                        : "bg-red-400 text-white"
+                      : "bg-white hover:bg-gray-100"
                   }`}
                 >
-                  <span className="font-semibold mr-2">
-                    {currentQuestion.type === 'multiple_choice' ? String.fromCharCode(65 + index) : ''}
-                  </span>
+                  <span className="font-semibold mr-2">{String.fromCharCode(65 + index)}.</span>
                   {option}
                 </button>
               ))}
             </div>
           </div>
 
-          {!hasAnswered && (
+          {selectedAnswer !== null && (
             <button
               onClick={submitAnswer}
-              disabled={selectedAnswer === null}
-              className="w-full bg-green-500 text-white py-3 rounded font-semibold hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
             >
               Submit Answer
             </button>
           )}
 
-          {hasAnswered && (
-            <div className="text-center text-green-600 font-semibold">
-              Answer submitted! Waiting for next question...
+          {selectedAnswer !== null && (
+            <div className="text-center text-green-600 font-semibold mt-4">
+              Answer submitted!
             </div>
           )}
         </div>
