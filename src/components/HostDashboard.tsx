@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Question {
   id?: string;
@@ -7,55 +9,175 @@ interface Question {
   options: string[];
   correct_answer: number;
   type: 'multiple_choice' | 'true_false';
+  order_index: number;
+}
+
+interface Room {
+  id: string;
+  code: string;
+  status: 'waiting' | 'active' | 'finished';
+  current_question_index: number;
 }
 
 const HostDashboard = () => {
-  const [roomCode, setRoomCode] = useState('');
+  const { user, profile } = useAuth();
+  const navigate = useNavigate();
+  const [room, setRoom] = useState<Room | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState<Question>({
     question_text: '',
     options: ['', '', '', ''],
     correct_answer: 0,
-    type: 'multiple_choice'
+    type: 'multiple_choice',
+    order_index: 0
   });
-  const [roomId, setRoomId] = useState<string | null>(null);
-  const [isQuizStarted, setIsQuizStarted] = useState(false);
+  const [players, setPlayers] = useState<any[]>([]);
+  const [currentQuestionData, setCurrentQuestionData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!user || profile?.role !== 'teacher') {
+      navigate('/');
+      return;
+    }
+
+    loadExistingRoom();
+    subscribeToRoomUpdates();
+  }, [user, profile]);
+
+  const loadExistingRoom = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('host_id', user.id)
+      .eq('status', 'waiting')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (data && !error) {
+      setRoom(data);
+      loadQuestions(data.id);
+      loadPlayers(data.id);
+    }
+  };
+
+  const subscribeToRoomUpdates = () => {
+    if (!user) return;
+
+    // Subscribe to room changes
+    const roomSubscription = supabase
+      .channel('room_updates')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'rooms',
+        filter: `host_id=eq.${user.id}`
+      }, (payload) => {
+        if (payload.new) {
+          setRoom(payload.new as Room);
+        }
+      })
+      .subscribe();
+
+    // Subscribe to player changes
+    const playerSubscription = supabase
+      .channel('player_updates')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'players'
+      }, (payload) => {
+        if (room) {
+          loadPlayers(room.id);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      roomSubscription.unsubscribe();
+      playerSubscription.unsubscribe();
+    };
+  };
+
+  const loadQuestions = async (roomId: string) => {
+    const { data, error } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('room_id', roomId)
+      .order('order_index');
+
+    if (data && !error) {
+      setQuestions(data);
+    }
+  };
+
+  const loadPlayers = async (roomId: string) => {
+    const { data, error } = await supabase
+      .from('players')
+      .select(`
+        id,
+        name,
+        score,
+        profiles(full_name, email)
+      `)
+      .eq('room_id', roomId)
+      .eq('is_connected', true);
+
+    if (data && !error) {
+      setPlayers(data);
+    }
+  };
 
   const generateRoomCode = () => {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
   };
 
   const createRoom = async () => {
+    if (!user) return;
+
+    setIsLoading(true);
     const code = generateRoomCode();
     const { data, error } = await supabase
       .from('rooms')
-      .insert([{ code, status: 'waiting' }])
+      .insert([{
+        code,
+        host_id: user.id,
+        status: 'waiting',
+        current_question_index: 0
+      }])
       .select()
       .single();
 
     if (error) {
       console.error('Error creating room:', error);
+      setIsLoading(false);
       return;
     }
 
-    setRoomId(data.id);
-    setRoomCode(code);
+    setRoom(data);
+    setIsLoading(false);
   };
 
   const addQuestion = async () => {
-    if (!roomId || !currentQuestion.question_text.trim()) return;
+    if (!room || !currentQuestion.question_text.trim()) return;
 
+    setIsLoading(true);
     const { data, error } = await supabase
       .from('questions')
       .insert([{
-        room_id: roomId,
-        ...currentQuestion
+        room_id: room.id,
+        ...currentQuestion,
+        order_index: questions.length
       }])
       .select()
       .single();
 
     if (error) {
       console.error('Error adding question:', error);
+      setIsLoading(false);
       return;
     }
 
@@ -64,30 +186,55 @@ const HostDashboard = () => {
       question_text: '',
       options: ['', '', '', ''],
       correct_answer: 0,
-      type: 'multiple_choice'
+      type: 'multiple_choice',
+      order_index: questions.length + 1
     });
+    setIsLoading(false);
   };
 
   const startQuiz = async () => {
-    if (!roomId) return;
+    if (!room) return;
 
+    setIsLoading(true);
     await supabase
       .from('rooms')
       .update({ status: 'active' })
-      .eq('id', roomId);
+      .eq('id', room.id);
 
-    setIsQuizStarted(true);
-    // Start broadcasting questions
-    broadcastNextQuestion();
+    // Start with first question
+    await broadcastNextQuestion();
+    setIsLoading(false);
   };
 
   const broadcastNextQuestion = async () => {
-    if (questions.length === 0) return;
+    if (!room || questions.length === 0) return;
 
-    const question = questions[0];
-    await supabase
-      .from('current_question')
-      .upsert([{ room_id: roomId, question_id: question.id }]);
+    const currentIndex = room.current_question_index;
+    const nextQuestion = questions.find(q => q.order_index === currentIndex);
+
+    if (nextQuestion) {
+      await supabase
+        .from('current_question')
+        .upsert([{
+          room_id: room.id,
+          question_id: nextQuestion.id,
+          question_index: currentIndex,
+          time_limit: 30
+        }]);
+    }
+  };
+
+  const nextQuestion = async () => {
+    if (!room) return;
+
+    const { data, error } = await supabase.rpc('next_question', {
+      room_uuid: room.id
+    });
+
+    if (!error && data) {
+      // Question advanced, broadcast next
+      await broadcastNextQuestion();
+    }
   };
 
   const handleQuestionTypeChange = (type: 'multiple_choice' | 'true_false') => {
@@ -102,24 +249,29 @@ const HostDashboard = () => {
     <div className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-8">Kahooot Clone - Host Dashboard</h1>
 
-      {!roomId ? (
+      {!room ? (
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-xl font-semibold mb-4">Create a New Room</h2>
           <button
             onClick={createRoom}
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+            disabled={isLoading}
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-300"
           >
-            Create Room
+            {isLoading ? 'Creating...' : 'Create Room'}
           </button>
         </div>
       ) : (
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-xl font-semibold mb-4">Room Code: {roomCode}</h2>
+            <h2 className="text-xl font-semibold mb-4">Room Code: {room.code}</h2>
             <p className="text-gray-600">Share this code with players to join the quiz.</p>
+            <p className="text-sm text-gray-500 mt-2">
+              Status: <span className="capitalize font-semibold">{room.status}</span> |
+              Players: {players.length}
+            </p>
           </div>
 
-          {!isQuizStarted && (
+          {room.status === 'waiting' && (
             <div className="bg-white p-6 rounded-lg shadow-md">
               <h2 className="text-xl font-semibold mb-4">Add Questions</h2>
 
@@ -203,9 +355,10 @@ const HostDashboard = () => {
 
                 <button
                   onClick={addQuestion}
-                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+                  disabled={isLoading}
+                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:bg-gray-300"
                 >
-                  Add Question
+                  {isLoading ? 'Adding...' : 'Add Question'}
                 </button>
               </div>
 
@@ -214,7 +367,7 @@ const HostDashboard = () => {
                   <h3 className="text-lg font-semibold mb-2">Questions ({questions.length})</h3>
                   <ul className="space-y-2">
                     {questions.map((q, index) => (
-                      <li key={index} className="p-2 bg-gray-50 rounded">
+                      <li key={q.id} className="p-2 bg-gray-50 rounded">
                         {q.question_text}
                       </li>
                     ))}
@@ -224,14 +377,44 @@ const HostDashboard = () => {
             </div>
           )}
 
-          {questions.length > 0 && !isQuizStarted && (
+          {questions.length > 0 && room.status === 'waiting' && (
             <div className="bg-white p-6 rounded-lg shadow-md">
               <button
                 onClick={startQuiz}
-                className="bg-purple-500 text-white px-6 py-3 rounded text-lg hover:bg-purple-600"
+                disabled={isLoading}
+                className="bg-purple-500 text-white px-6 py-3 rounded text-lg hover:bg-purple-600 disabled:bg-gray-300"
               >
-                Start Quiz
+                {isLoading ? 'Starting...' : 'Start Quiz'}
               </button>
+            </div>
+          )}
+
+          {room.status === 'active' && (
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-xl font-semibold mb-4">Quiz in Progress</h2>
+              <p className="text-gray-600 mb-4">
+                Current Question: {room.current_question_index + 1} of {questions.length}
+              </p>
+              <button
+                onClick={nextQuestion}
+                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+              >
+                Next Question
+              </button>
+            </div>
+          )}
+
+          {players.length > 0 && (
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h3 className="text-lg font-semibold mb-4">Players ({players.length})</h3>
+              <div className="space-y-2">
+                {players.map((player) => (
+                  <div key={player.id} className="flex justify-between items-center p-2 bg-gray-50 rounded">
+                    <span>{player.name}</span>
+                    <span className="font-semibold">{player.score} points</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Question {
   id: string;
@@ -13,74 +14,137 @@ interface Player {
   id: string;
   name: string;
   score: number;
+  profiles?: {
+    full_name: string;
+    email: string;
+  };
 }
 
 const QuizPlayer = () => {
   const { roomCode } = useParams<{ roomCode: string }>();
-  const location = useLocation();
-  const playerId = location.state?.playerId;
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
   const [timeLeft, setTimeLeft] = useState(30);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [quizEnded, setQuizEnded] = useState(false);
+  const [roomStatus, setRoomStatus] = useState<'waiting' | 'active' | 'finished'>('waiting');
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!roomCode || !playerId) return;
+    if (!user || !roomCode) {
+      navigate('/');
+      return;
+    }
 
-    // Subscribe to current question changes
-    const questionSubscription = supabase
-      .channel('current_question')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'current_question',
-        filter: `room_code=eq.${roomCode}`
-      }, (payload) => {
-        if (payload.new) {
-          fetchCurrentQuestion();
-        }
-      })
-      .subscribe();
+    initializePlayer();
+  }, [user, roomCode]);
 
-    // Subscribe to room status changes
-    const roomSubscription = supabase
-      .channel('rooms')
+  const initializePlayer = async () => {
+    try {
+      // Get room
+      const { data: roomData, error: roomError } = await supabase
+        .from('rooms')
+        .select('id, status')
+        .eq('code', roomCode.toUpperCase())
+        .single();
+
+      if (roomError || !roomData) {
+        navigate('/');
+        return;
+      }
+
+      setRoomId(roomData.id);
+      setRoomStatus(roomData.status);
+
+      // Get or create player
+      const { data: playerData, error: playerError } = await supabase
+        .from('players')
+        .select('id')
+        .eq('room_id', roomData.id)
+        .eq('user_id', user.id)
+        .single();
+
+      if (playerError && playerError.code !== 'PGRST116') {
+        console.error('Error finding player:', playerError);
+        navigate('/');
+        return;
+      }
+
+      if (playerData) {
+        setPlayerId(playerData.id);
+      } else {
+        // Player not found, redirect to join
+        navigate(`/join/${roomCode}`);
+        return;
+      }
+
+      // Subscribe to updates
+      subscribeToRoom(roomData.id);
+      subscribeToPlayers(roomData.id);
+      subscribeToCurrentQuestion(roomData.id);
+
+      // Load initial data
+      loadPlayers(roomData.id);
+      fetchCurrentQuestion(roomData.id);
+
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Error initializing player:', error);
+      navigate('/');
+    }
+  };
+
+  const subscribeToRoom = (roomId: string) => {
+    const subscription = supabase
+      .channel('room_status')
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
         table: 'rooms',
-        filter: `code=eq.${roomCode}`
+        filter: `id=eq.${roomId}`
       }, (payload) => {
-        if (payload.new.status === 'finished') {
-          setQuizEnded(true);
-        }
+        setRoomStatus(payload.new.status);
       })
       .subscribe();
 
-    // Subscribe to players updates
-    const playersSubscription = supabase
-      .channel('players')
+    return () => subscription.unsubscribe();
+  };
+
+  const subscribeToPlayers = (roomId: string) => {
+    const subscription = supabase
+      .channel('players_update')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'players',
-        filter: `room_id=eq.${getRoomId()}`
+        filter: `room_id=eq.${roomId}`
       }, () => {
-        fetchPlayers();
+        loadPlayers(roomId);
       })
       .subscribe();
 
-    fetchCurrentQuestion();
-    fetchPlayers();
+    return () => subscription.unsubscribe();
+  };
 
-    return () => {
-      questionSubscription.unsubscribe();
-      roomSubscription.unsubscribe();
-      playersSubscription.unsubscribe();
-    };
-  }, [roomCode, playerId]);
+  const subscribeToCurrentQuestion = (roomId: string) => {
+    const subscription = supabase
+      .channel('current_question_update')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'current_question',
+        filter: `room_id=eq.${roomId}`
+      }, () => {
+        fetchCurrentQuestion(roomId);
+      })
+      .subscribe();
+
+    return () => subscription.unsubscribe();
+  };
 
   useEffect(() => {
     if (currentQuestion && !hasAnswered) {
@@ -98,17 +162,7 @@ const QuizPlayer = () => {
     }
   }, [currentQuestion, hasAnswered]);
 
-  const getRoomId = async () => {
-    const { data } = await supabase
-      .from('rooms')
-      .select('id')
-      .eq('code', roomCode)
-      .single();
-    return data?.id;
-  };
-
-  const fetchCurrentQuestion = async () => {
-    const roomId = await getRoomId();
+  const fetchCurrentQuestion = async (roomId: string) => {
     const { data } = await supabase
       .from('current_question')
       .select(`
@@ -133,19 +187,29 @@ const QuizPlayer = () => {
     }
   };
 
-  const fetchPlayers = async () => {
-    const roomId = await getRoomId();
+  const loadPlayers = async (roomId: string) => {
     const { data } = await supabase
       .from('players')
-      .select('id, name, score')
+      .select(`
+        id,
+        name,
+        score,
+        profiles (
+          full_name,
+          email
+        )
+      `)
       .eq('room_id', roomId)
+      .eq('is_connected', true)
       .order('score', { ascending: false });
 
-    setPlayers(data || []);
+    if (data) {
+      setPlayers(data);
+    }
   };
 
   const submitAnswer = async () => {
-    if (selectedAnswer === null || !currentQuestion || hasAnswered) return;
+    if (selectedAnswer === null || !currentQuestion || hasAnswered || !playerId) return;
 
     setHasAnswered(true);
 
@@ -166,7 +230,8 @@ const QuizPlayer = () => {
         player_id: playerId,
         question_id: currentQuestion.id,
         answer: selectedAnswer,
-        is_correct: isCorrect
+        is_correct: isCorrect,
+        time_taken: 30 - timeLeft
       }]);
 
     // Update score if correct
@@ -186,7 +251,15 @@ const QuizPlayer = () => {
     }
   };
 
-  if (quizEnded) {
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (roomStatus === 'finished') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-2xl">
@@ -205,7 +278,7 @@ const QuizPlayer = () => {
     );
   }
 
-  if (!currentQuestion) {
+  if (roomStatus === 'waiting' || !currentQuestion) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="bg-white p-8 rounded-lg shadow-md text-center">

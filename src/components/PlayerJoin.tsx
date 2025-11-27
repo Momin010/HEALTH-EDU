@@ -1,15 +1,27 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 
 const PlayerJoin = () => {
   const { roomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
+  const { user, profile } = useAuth();
   const [playerName, setPlayerName] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (profile) {
+      setPlayerName(profile.full_name || profile.email || '');
+    }
+  }, [profile]);
 
   const joinRoom = async () => {
-    if (!playerName.trim() || !roomCode) return;
+    if (!user || !playerName.trim() || !roomCode) return;
+
+    setIsLoading(true);
+    setError('');
 
     // Check if room exists
     const { data: room, error: roomError } = await supabase
@@ -20,11 +32,27 @@ const PlayerJoin = () => {
 
     if (roomError || !room) {
       setError('Room not found');
+      setIsLoading(false);
       return;
     }
 
     if (room.status !== 'waiting' && room.status !== 'active') {
       setError('Room is not available');
+      setIsLoading(false);
+      return;
+    }
+
+    // Check if user is already in this room
+    const { data: existingPlayer } = await supabase
+      .from('players')
+      .select('id')
+      .eq('room_id', room.id)
+      .eq('user_id', user.id)
+      .single();
+
+    if (existingPlayer) {
+      // User already joined, go directly to play
+      navigate(`/play/${roomCode}`);
       return;
     }
 
@@ -33,19 +61,22 @@ const PlayerJoin = () => {
       .from('players')
       .insert([{
         room_id: room.id,
+        user_id: user.id,
         name: playerName.trim(),
-        score: 0
+        score: 0,
+        is_connected: true
       }])
       .select()
       .single();
 
     if (playerError) {
       setError('Failed to join room');
+      setIsLoading(false);
       return;
     }
 
     // Navigate to quiz player
-    navigate(`/play/${roomCode}`, { state: { playerId: player.id } });
+    navigate(`/play/${roomCode}`);
   };
 
   return (

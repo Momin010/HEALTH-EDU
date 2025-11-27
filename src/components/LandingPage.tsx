@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 const LandingPage = () => {
   const navigate = useNavigate();
+  const { profile, signOut } = useAuth();
   const [roomCode, setRoomCode] = useState('');
 
   const handleJoinRoom = () => {
@@ -17,20 +19,30 @@ const LandingPage = () => {
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2">Kahooot Clone</h1>
           <p className="text-gray-600">Interactive Quiz Platform</p>
+          {profile && (
+            <div className="mt-4 text-sm text-gray-500">
+              <p>Welcome, {profile.full_name || profile.email}!</p>
+              <p className="capitalize">Role: {profile.role}</p>
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
-          {/* Create Room Button */}
-          <button
-            onClick={() => navigate('/host')}
-            className="w-full bg-blue-500 text-white py-4 px-6 rounded-lg font-semibold text-lg hover:bg-blue-600 transition-colors shadow-lg"
-          >
-            Create Room (Teacher)
-          </button>
+          {/* Create Room Button - Only for teachers */}
+          {profile?.role === 'teacher' && (
+            <button
+              onClick={() => navigate('/host')}
+              className="w-full bg-blue-500 text-white py-4 px-6 rounded-lg font-semibold text-lg hover:bg-blue-600 transition-colors shadow-lg"
+            >
+              Create Room (Teacher)
+            </button>
+          )}
 
           {/* Join Room Section */}
           <div className="text-center">
-            <p className="text-gray-600 mb-4">Or join an existing room:</p>
+            <p className="text-gray-600 mb-4">
+              {profile?.role === 'teacher' ? 'Or join a room as a student:' : 'Join an existing room:'}
+            </p>
             <div className="space-y-3">
               <input
                 type="text"
@@ -45,13 +57,22 @@ const LandingPage = () => {
                 disabled={!roomCode.trim()}
                 className="w-full bg-green-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-lg"
               >
-                Join Room (Student)
+                Join Room
               </button>
             </div>
           </div>
         </div>
 
-        <div className="mt-8 text-center text-sm text-gray-500">
+        <div className="mt-8 text-center">
+          <button
+            onClick={signOut}
+            className="text-gray-500 hover:text-gray-700 text-sm underline"
+          >
+            Sign Out
+          </button>
+        </div>
+
+        <div className="mt-4 text-center text-sm text-gray-500">
           <p>Perfect for health education quizzes!</p>
         </div>
       </div>
