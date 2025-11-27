@@ -1,15 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-
-interface Question {
-  id?: string;
-  question_text: string;
-  options: string[];
-  correct_answer: number;
-  type: 'multiple_choice' | 'true_false';
-  order_index: number;
-}
+import { quizQuestions, QUIZ_CONFIG } from '../data/quizQuestions';
 
 interface Room {
   id: string;
@@ -34,14 +26,6 @@ const HostDashboard = () => {
   const navigate = useNavigate();
 
   const [room, setRoom] = useState<Room | null>(null);
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [currentQuestion, setCurrentQuestion] = useState<Question>({
-    question_text: '',
-    options: ['', '', '', ''],
-    correct_answer: 0,
-    type: 'multiple_choice',
-    order_index: 0
-  });
   const [players, setPlayers] = useState<Player[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -84,7 +68,6 @@ const HostDashboard = () => {
 
     if (data && (data.status === 'waiting' || data.status === 'active')) {
       setRoom(data);
-      await loadQuestions(data.id);
       await loadPlayers(data.id);
       subscribeToRoomUpdates(data.id);
     } else {
@@ -146,8 +129,6 @@ const HostDashboard = () => {
   const cleanupSubscriptions = () => {
     try {
       if (roomChannelRef.current) {
-        // Supabase channel has unsubscribe or remove
-        // call unsubscribe if available
         if (typeof roomChannelRef.current.unsubscribe === 'function') {
           roomChannelRef.current.unsubscribe();
         } else if (typeof roomChannelRef.current.remove === 'function') {
@@ -173,20 +154,6 @@ const HostDashboard = () => {
     }
   };
 
-  const loadQuestions = async (roomId: string) => {
-    const { data, error } = await supabase
-      .from('questions')
-      .select('*')
-      .eq('room_id', roomId)
-      .order('order_index');
-
-    if (!error && data) {
-      setQuestions(data);
-    } else if (error) {
-      console.error('Error loading questions:', error);
-    }
-  };
-
   const loadPlayers = async (roomId: string) => {
     const { data, error } = await supabase
       .from('players')
@@ -202,14 +169,10 @@ const HostDashboard = () => {
     }
   };
 
-  const generateRoomCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  };
-
   const createRoom = async () => {
     setIsLoading(true);
 
-    const code = generateRoomCode();
+    const code = QUIZ_CONFIG.ROOM_CODE;
     const { data, error } = await supabase
       .from('rooms')
       .insert([
@@ -238,44 +201,33 @@ const HostDashboard = () => {
 
     // set room and subscribe to updates for this new room
     setRoom(data);
-    await loadQuestions(data.id);
     await loadPlayers(data.id);
     subscribeToRoomUpdates(data.id);
+
+    // Add the hardcoded questions to the database
+    await addQuestionsToDatabase(data.id);
 
     setIsLoading(false);
   };
 
-  const addQuestion = async () => {
-    if (!room || !currentQuestion.question_text.trim()) return;
+  const addQuestionsToDatabase = async (roomId: string) => {
+    // Convert quiz questions to database format
+    const questionsToInsert = quizQuestions.map((q, index) => ({
+      room_id: roomId,
+      question_text: q.question_text,
+      options: q.options,
+      correct_answer: q.correct_answer,
+      type: q.type,
+      order_index: index
+    }));
 
-    setIsLoading(true);
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('questions')
-      .insert([
-        {
-          room_id: room.id,
-          ...currentQuestion,
-          order_index: questions.length // keep zero-based index
-        }
-      ])
-      .select()
-      .single();
+      .insert(questionsToInsert);
 
     if (error) {
-      console.error('Error adding question:', error);
-      setIsLoading(false);
-      return;
+      console.error('Error adding questions:', error);
     }
-
-    setQuestions((prev) => [...prev, data]);
-    setCurrentQuestion({
-      question_text: '',
-      options: ['', '', '', ''],
-      correct_answer: 0,
-      type: 'multiple_choice',
-      order_index: questions.length + 1
-    });
-    setIsLoading(false);
   };
 
   const startQuiz = async () => {
@@ -301,7 +253,7 @@ const HostDashboard = () => {
 
   const broadcastNextQuestion = async (roomId?: string) => {
     const rId = roomId ?? room?.id;
-    if (!rId || questions.length === 0) return;
+    if (!rId || quizQuestions.length === 0) return;
 
     // reload room to get latest index if necessary
     const { data: roomData } = await supabase
@@ -311,7 +263,7 @@ const HostDashboard = () => {
       .single();
 
     const currentIndex = roomData?.current_question_index ?? 0;
-    const nextQuestion = questions.find((q) => q.order_index === currentIndex);
+    const nextQuestion = quizQuestions.find((q) => q.order_index === currentIndex);
 
     if (nextQuestion) {
       const { error } = await supabase
@@ -321,7 +273,7 @@ const HostDashboard = () => {
             room_id: rId,
             question_id: nextQuestion.id,
             question_index: currentIndex,
-            time_limit: 30
+            time_limit: QUIZ_CONFIG.TIME_LIMIT
           }
         ]);
 
@@ -357,177 +309,74 @@ const HostDashboard = () => {
     if (freshRoom) setRoom(freshRoom);
   };
 
-  const handleQuestionTypeChange = (type: 'multiple_choice' | 'true_false') => {
-    setCurrentQuestion({
-      ...currentQuestion,
-      type,
-      options: type === 'true_false' ? ['True', 'False'] : ['', '', '', '']
-    });
-  };
-
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-3xl font-bold mb-8">Kahooot Clone - Host Dashboard</h1>
+      <h1 className="text-3xl font-bold mb-8">Terveystieto KPL36 - Quiz Isäntä</h1>
 
       {!room ? (
         <div className="bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4">Create a New Room</h2>
+          <h2 className="text-xl font-semibold mb-4">Luo Terveystiedon Quiz Huone</h2>
+          <p className="text-gray-600 mb-4">
+            Tämä quiz sisältää 10 kysymystä itsehoidosta ja lääkkeistä (KPL 36).
+          </p>
           <button
             onClick={createRoom}
             disabled={isLoading}
             className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-300"
           >
-            {isLoading ? 'Creating...' : 'Create Room'}
+            {isLoading ? 'Luodaan...' : 'Luo Quiz Huone'}
           </button>
         </div>
       ) : (
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-xl font-semibold mb-4">Room Code: {room.code}</h2>
-            <p className="text-gray-600">Share this code with players to join the quiz.</p>
-            <p className="text-sm text-gray-500 mt-2">
-              Status: <span className="capitalize font-semibold">{room.status}</span> | Players: {players.length}
+            <h2 className="text-xl font-semibold mb-4">Huone Koodi: {room.code}</h2>
+            <p className="text-gray-600 mb-2">
+              Opiskelijat voivat liittyä tähän quiz-huoneeseen huonekoodilla.
+            </p>
+            <p className="text-sm text-gray-500">
+              Tila: <span className="capitalize font-semibold">{room.status}</span> | 
+              Pelaajat: {players.length} | 
+              Kysymykset: {quizQuestions.length}
             </p>
           </div>
 
           {room.status === 'waiting' && (
             <div className="bg-white p-6 rounded-lg shadow-md">
-              <h2 className="text-xl font-semibold mb-4">Add Questions</h2>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Question Type</label>
-                  <select
-                    value={currentQuestion.type}
-                    onChange={(e) => handleQuestionTypeChange(e.target.value as 'multiple_choice' | 'true_false')}
-                    className="w-full p-2 border rounded"
-                  >
-                    <option value="multiple_choice">Multiple Choice (4 options)</option>
-                    <option value="true_false">True/False</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-1">Question</label>
-                  <input
-                    type="text"
-                    value={currentQuestion.question_text}
-                    onChange={(e) => setCurrentQuestion({ ...currentQuestion, question_text: e.target.value })}
-                    className="w-full p-2 border rounded"
-                    placeholder="Enter your question"
-                  />
-                </div>
-
-                {currentQuestion.type === 'multiple_choice' ? (
-                  <div className="grid grid-cols-2 gap-4">
-                    {currentQuestion.options.map((option, index) => (
-                      <div key={index}>
-                        <label className="block text-sm font-medium mb-1">
-                          Option {index + 1}
-                          <input
-                            type="radio"
-                            name="correct"
-                            checked={currentQuestion.correct_answer === index}
-                            onChange={() => setCurrentQuestion({ ...currentQuestion, correct_answer: index })}
-                            className="ml-2"
-                          />
-                        </label>
-                        <input
-                          type="text"
-                          value={option}
-                          onChange={(e) => {
-                            const newOptions = [...currentQuestion.options];
-                            newOptions[index] = e.target.value;
-                            setCurrentQuestion({ ...currentQuestion, options: newOptions });
-                          }}
-                          className="w-full p-2 border rounded"
-                          placeholder={`Option ${index + 1}`}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Correct Answer</label>
-                    <div className="flex space-x-4">
-                      <label>
-                        <input
-                          type="radio"
-                          name="correct"
-                          checked={currentQuestion.correct_answer === 0}
-                          onChange={() => setCurrentQuestion({ ...currentQuestion, correct_answer: 0 })}
-                        />
-                        True
-                      </label>
-                      <label>
-                        <input
-                          type="radio"
-                          name="correct"
-                          checked={currentQuestion.correct_answer === 1}
-                          onChange={() => setCurrentQuestion({ ...currentQuestion, correct_answer: 1 })}
-                        />
-                        False
-                      </label>
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  onClick={addQuestion}
-                  disabled={isLoading}
-                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:bg-gray-300"
-                >
-                  {isLoading ? 'Adding...' : 'Add Question'}
-                </button>
-              </div>
-
-              {questions.length > 0 && (
-                <div className="mt-6">
-                  <h3 className="text-lg font-semibold mb-2">Questions ({questions.length})</h3>
-                  <ul className="space-y-2">
-                    {questions.map((q) => (
-                      <li key={q.id} className="p-2 bg-gray-50 rounded">
-                        {q.question_text}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-
-          {questions.length > 0 && room.status === 'waiting' && (
-            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-xl font-semibold mb-4">Quiz valmis aloitettavaksi</h2>
+              <p className="text-gray-600 mb-4">
+                10 kysymystä itsehoidosta ja lääkkeistä. Opiskelijoilla on 30 sekuntia aikaa per kysymys.
+              </p>
               <button
                 onClick={startQuiz}
                 disabled={isLoading}
-                className="bg-purple-500 text-white px-6 py-3 rounded text-lg hover:bg-purple-600 disabled:bg-gray-300"
+                className="bg-green-500 text-white px-6 py-3 rounded text-lg hover:bg-green-600 disabled:bg-gray-300"
               >
-                {isLoading ? 'Starting...' : 'Start Quiz'}
+                {isLoading ? 'Aloitetaan...' : 'Aloita Quiz'}
               </button>
             </div>
           )}
 
           {room.status === 'active' && (
             <div className="bg-white p-6 rounded-lg shadow-md">
-              <h2 className="text-xl font-semibold mb-4">Quiz in Progress</h2>
+              <h2 className="text-xl font-semibold mb-4">Quiz käynnissä</h2>
               <p className="text-gray-600 mb-4">
-                Current Question: {room.current_question_index + 1} of {questions.length}
+                Nykyinen kysymys: {room.current_question_index + 1} / {quizQuestions.length}
               </p>
               <button onClick={nextQuestion} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
-                Next Question
+                Seuraava kysymys
               </button>
             </div>
           )}
 
           {players.length > 0 && (
             <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-lg font-semibold mb-4">Players ({players.length})</h3>
+              <h3 className="text-lg font-semibold mb-4">Pelaajat ({players.length})</h3>
               <div className="space-y-2">
-                {players.map((player) => (
+                {players.map((player, index) => (
                   <div key={player.id} className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                    <span>{player.name}</span>
-                    <span className="font-semibold">{player.score} points</span>
+                    <span>#{index + 1} {player.name}</span>
+                    <span className="font-semibold">{player.score} pistettä</span>
                   </div>
                 ))}
               </div>

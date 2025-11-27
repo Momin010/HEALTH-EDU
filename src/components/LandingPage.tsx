@@ -30,8 +30,8 @@ const LandingPage = () => {
     <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-2xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">Kahooot Clone</h1>
-          <p className="text-gray-600">Interactive Quiz Platform</p>
+          <h1 className="text-4xl font-bold text-gray-800 mb-2">Terveystieto KPL36</h1>
+          <p className="text-gray-600">Itsehoito ja lääkkeet - Interaktiivinen Quiz</p>
         </div>
 
         <div className="space-y-6">
@@ -45,14 +45,14 @@ const LandingPage = () => {
               onClick={() => navigate('/host')}
               className="w-full bg-blue-500 text-white py-4 px-6 rounded-lg font-semibold text-lg hover:bg-blue-600 transition-colors shadow-lg"
             >
-              Continue Hosting Quiz
+              Jatka Terveystiedon Quizia
             </button>
           ) : (
             <button
               onClick={() => navigate('/host')}
               className="w-full bg-blue-500 text-white py-4 px-6 rounded-lg font-semibold text-lg hover:bg-blue-600 transition-colors shadow-lg"
             >
-              Create New Quiz
+              Luo Terveystiedon Quiz
             </button>
           )}
 
@@ -60,18 +60,18 @@ const LandingPage = () => {
             onClick={() => navigate('/student')}
             className="w-full bg-green-500 text-white py-4 px-6 rounded-lg font-semibold text-lg hover:bg-green-600 transition-colors shadow-lg"
           >
-            Join Quiz as Student
+              Liity Terveystiedon Quiziin
           </button>
 
           {/* Quick Join Section */}
           <div className="text-center border-t pt-6">
-            <p className="text-gray-600 mb-4">Or join directly with a room code:</p>
+            <p className="text-gray-600 mb-4">Tai liity suoraan huonekoodilla:</p>
             <div className="space-y-3">
               <input
                 type="text"
                 value={roomCode}
                 onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                placeholder="Enter Room Code"
+                placeholder="Syötä Huonekoodi"
                 className="w-full p-3 border-2 border-gray-300 rounded-lg text-center text-2xl font-mono tracking-wider focus:outline-none focus:border-green-500"
                 maxLength={6}
               />
@@ -80,15 +80,15 @@ const LandingPage = () => {
                 disabled={!roomCode.trim()}
                 className="w-full bg-purple-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-purple-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-lg"
               >
-                Quick Join
+                Liity Nopeasti
               </button>
             </div>
           </div>
         </div>
 
         <div className="mt-8 text-center text-sm text-gray-500">
-          <p>Perfect for health education quizzes!</p>
-          <p className="mt-2">Everything saved locally - no accounts needed!</p>
+          <p>Täydellinen terveystiedon opetukseen!</p>
+          <p className="mt-2">Kaikki tallennetaan paikallisesti - ei tilejä tarvita!</p>
         </div>
       </div>
     </div>

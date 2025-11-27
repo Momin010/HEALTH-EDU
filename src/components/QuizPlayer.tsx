@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { calculatePoints, QUIZ_CONFIG } from "../data/quizQuestions";
 
 interface Question {
   id: string;
@@ -31,7 +32,7 @@ const QuizPlayer = () => {
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
-  const [timeLeft, setTimeLeft] = useState<number>(30);
+  const [timeLeft, setTimeLeft] = useState<number>(QUIZ_CONFIG.TIME_LIMIT);
   const [players, setPlayers] = useState<any[]>([]);
   const [playerSession, setPlayerSession] = useState<PlayerSession | null>(null);
 
@@ -128,7 +129,7 @@ const QuizPlayer = () => {
               setCurrentQuestion(question);
               setSelectedAnswer(null);
               setTimeLeft(cq.time_limit);
-              startTimer(cq.time_limit);
+              startTimer(QUIZ_CONFIG.TIME_LIMIT);
             }
           }
         }
@@ -149,13 +150,18 @@ const QuizPlayer = () => {
       setTimeLeft(time);
       if (time <= 0) {
         clearInterval(timerRef.current!);
-        submitAnswer(); // auto-submit
+        submitAnswer(); // auto-submit with 0 points
       }
     }, 1000);
   };
 
   const submitAnswer = async () => {
     if (!currentQuestion || selectedAnswer === null || !playerSession) return;
+
+    // Calculate points based on speed (time left)
+    const pointsEarned = calculatePoints(timeLeft);
+    const isCorrect = selectedAnswer === currentQuestion.correct_answer;
+    const finalPoints = isCorrect ? pointsEarned : 0;
 
     // Submit answer
     await supabase
@@ -164,8 +170,26 @@ const QuizPlayer = () => {
         player_id: playerSession.playerId,
         question_id: currentQuestion.id,
         answer: selectedAnswer,
-        is_correct: selectedAnswer === currentQuestion.correct_answer
+        is_correct: isCorrect
       }]);
+
+    // Update player score if answer is correct
+    if (finalPoints > 0) {
+      // First get current score
+      const { data: currentPlayer } = await supabase
+        .from('players')
+        .select('score')
+        .eq('id', playerSession.playerId)
+        .single();
+      
+      if (currentPlayer) {
+        const newScore = currentPlayer.score + finalPoints;
+        await supabase
+          .from('players')
+          .update({ score: newScore })
+          .eq('id', playerSession.playerId);
+      }
+    }
 
     setSelectedAnswer(null);
   };
@@ -224,10 +248,18 @@ const QuizPlayer = () => {
       <div className="max-w-4xl mx-auto">
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex justify-between items-center mb-4">
-            <h1 className="text-2xl font-bold">Room: {roomCode}</h1>
+            <h1 className="text-2xl font-bold">Terveystieto KPL36</h1>
             <div className="text-right">
-              <div className="text-sm text-gray-600">Time Left</div>
+              <div className="text-sm text-gray-600">Aikaa jäljellä</div>
               <div className="text-3xl font-bold text-red-500">{timeLeft}s</div>
+              <div className="text-sm text-green-600">
+                Max pistettä: {QUIZ_CONFIG.MAX_POINTS}
+              </div>
+              {selectedAnswer === null && (
+                <div className="text-sm text-blue-600">
+                  Ansaittavissa: {calculatePoints(timeLeft)} pistettä
+                </div>
+              )}
             </div>
           </div>
 
